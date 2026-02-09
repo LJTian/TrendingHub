@@ -1,0 +1,24 @@
+# Go build artifacts
+bin/
+tmp/
+*.log
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Go modules vendoring (if ever used)
+vendor/
+
+# Web frontend dependencies and build outputs
+web/node_modules/
+web/dist/
+web/.vite/
+web/.turbo/
+web/.eslintcache
+
+# Env / local config
+*.env
+*.local
+
