@@ -57,6 +57,8 @@ npm run dev
   - `channel`：数据源 code，例如 `github`。
   - `sort`：排序方式，`latest`（按发布时间倒序，默认）或 `hot`（按热度值倒序）。
   - `limit`：返回条数，默认 20，上限 100。
+  - `date`：可选，格式 `YYYY-MM-DD`，指定则只返回该日期的数据，便于按日期展示。
+- `GET http://localhost:9000/api/v1/news/dates`：获取有数据的日期列表（倒序），支持参数 `channel`、`limit`（默认 31），供前端按日期选择展示。
 
 示例：
 
@@ -67,6 +69,6 @@ curl "http://localhost:9000/api/v1/news?channel=github&sort=hot&limit=10"
 > 注意：
 > - GitHub Trending 页面结构可能会变化，解析逻辑属于“尽力而为”的实现。
 > - 若访问出现异常，可先在本机浏览器确认 `https://github.com/trending` 是否可访问，再查看服务端日志。
+> - GitHub 条目的「介绍」使用 Trending 页上的仓库介绍（单行描述），不请求 README 文件。若介绍非汉语，会自动翻译为中文（优先 Google 翻译，失败时回退 MyMemory）。
+> - X 热搜因外部数据源检索不稳定暂未接入；采集器代码保留在 `internal/collector/x_trends.go`，稳定后可再启用。
 
-# TrendingHub
-自动检索热点信息网站

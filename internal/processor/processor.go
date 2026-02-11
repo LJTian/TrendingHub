@@ -16,6 +16,7 @@ type ProcessedNews struct {
 	URL         string
 	Source      string
 	Summary     string
+	Description string
 	PublishedAt time.Time
 	HotScore    float64
 	RawData     map[string]any
@@ -39,12 +40,17 @@ func (p *SimpleProcessor) Process(items []collector.NewsItem) []ProcessedNews {
 		}
 		seen[id] = struct{}{}
 
+		summary := strings.TrimSpace(it.Summary)
+		if summary == "" {
+			summary = it.Title
+		}
 		out = append(out, ProcessedNews{
 			ID:          id,
 			Title:       strings.TrimSpace(it.Title),
 			URL:         it.URL,
 			Source:      it.Source,
-			Summary:     it.Title, // MVP: 暂用标题做摘要
+			Summary:     summary,
+			Description: strings.TrimSpace(it.Description),
 			PublishedAt: it.PublishedAt,
 			HotScore:    it.HotScore,
 			RawData:     it.RawData,
@@ -54,6 +60,7 @@ func (p *SimpleProcessor) Process(items []collector.NewsItem) []ProcessedNews {
 	return out
 }
 
+// hashURL 仅用于去重与主键生成，非密码学用途；若需安全场景请改用 SHA256。
 func hashURL(url string) string {
 	h := sha1.New()
 	h.Write([]byte(url))

@@ -9,7 +9,7 @@ import (
 	"github.com/gocolly/colly/v2"
 )
 
-// GitHubTrendingMock 最初是示例，现在实现一个简单的 GitHub Trending 抓取
+// GitHubTrendingMock 抓取 GitHub Trending，使用页上的仓库介绍（p 标签）作为详情介绍
 type GitHubTrendingMock struct{}
 
 func (g *GitHubTrendingMock) Name() string {
@@ -23,12 +23,10 @@ func (g *GitHubTrendingMock) Fetch() ([]NewsItem, error) {
 		colly.AllowedDomains("github.com"),
 		colly.UserAgent("TrendingHubBot/1.0"),
 	)
-	// 避免长时间阻塞，设置较短超时
 	c.SetRequestTimeout(5 * time.Second)
 
 	results := make([]NewsItem, 0, 20)
 
-	// GitHub Trending 页面结构可能变动，此处实现为“尽力而为”的解析
 	c.OnHTML("article.Box-row", func(e *colly.HTMLElement) {
 		titleSel := e.DOM.Find("h2 a")
 		if titleSel.Length() == 0 {
@@ -43,16 +41,30 @@ func (g *GitHubTrendingMock) Fetch() ([]NewsItem, error) {
 
 		fullURL := "https://github.com" + strings.TrimSpace(href)
 
-		// star 数
 		starsText := strings.TrimSpace(e.ChildText("a[href$=\"/stargazers\"]"))
 		stars := parseStars(starsText)
 
-		// 简单用 star 数作为 hotScore
+		// 从 Trending 页抓取仓库简短描述（p 标签）
+		pageDesc := strings.TrimSpace(e.ChildText("p"))
+		summary := repoName
+		if stars > 0 {
+			summary = repoName + " · " + starsText + " stars"
+		}
+		desc := pageDesc
+		if desc == "" {
+			desc = "GitHub Trending 仓库，点击标题前往查看详情。"
+		} else if !isMostlyChinese(desc) {
+			// 非汉语则翻译成中文
+			desc = translateToChinese(desc)
+		}
+
 		item := NewsItem{
 			Title:       repoName,
 			URL:         fullURL,
 			Source:      "github",
-			PublishedAt: time.Now(), // Trending 没有明确发布时间，使用当前时间
+			Summary:     summary,
+			Description: desc,
+			PublishedAt: time.Now(),
 			HotScore:    float64(stars),
 			RawData: map[string]any{
 				"stars": stars,
@@ -66,7 +78,6 @@ func (g *GitHubTrendingMock) Fetch() ([]NewsItem, error) {
 		return nil, err
 	}
 
-	// 如果因为网络或页面结构变化导致解析不到任何条目，直接返回空结果
 	if len(results) == 0 {
 		log.Printf("fetch GitHub Trending got 0 items")
 		return nil, nil

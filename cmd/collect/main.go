@@ -3,15 +3,14 @@ package main
 import (
 	"log"
 
-	"github.com/LJTian/TrendingHub/internal/api"
 	"github.com/LJTian/TrendingHub/internal/collector"
 	"github.com/LJTian/TrendingHub/internal/config"
 	"github.com/LJTian/TrendingHub/internal/processor"
 	"github.com/LJTian/TrendingHub/internal/scheduler"
 	"github.com/LJTian/TrendingHub/internal/storage"
-	"github.com/gin-gonic/gin"
 )
 
+// 一个仅执行一次采集任务的命令行入口：适合手动触发采集
 func main() {
 	cfg := config.Load()
 
@@ -20,7 +19,7 @@ func main() {
 		log.Fatalf("init store failed: %v", err)
 	}
 
-	// 确保各个渠道存在
+	// 确保各个渠道存在（与 cmd/api 保持一致）
 	if _, err := store.EnsureChannel("github", "GitHub Trending", "https://github.com/trending"); err != nil {
 		log.Fatalf("ensure channel github failed: %v", err)
 	}
@@ -31,7 +30,7 @@ func main() {
 		log.Fatalf("ensure channel gold failed: %v", err)
 	}
 
-	// 注册采集器（X 热搜因检索不稳定暂未接入）
+	// 注册采集器
 	fetchers := []collector.Fetcher{
 		&collector.GitHubTrendingMock{},
 		&collector.BaiduHotFetcher{},
@@ -39,23 +38,13 @@ func main() {
 		&collector.AShareIndexFetcher{},
 	}
 
-	// Processor & Scheduler
 	p := processor.NewSimpleProcessor()
 	s, err := scheduler.New(cfg.CronSpec, fetchers, p, store)
 	if err != nil {
 		log.Fatalf("init scheduler failed: %v", err)
 	}
-	s.Start()
 
-	// API
-	r := gin.Default()
-	apiServer := api.NewServer(store)
-	apiServer.RegisterRoutes(r)
-
-	addr := ":" + cfg.AppPort
-	log.Printf("starting api server at %s ...", addr)
-	if err := r.Run(addr); err != nil {
-		log.Fatalf("server exit: %v", err)
-	}
+	// 只执行一轮采集任务后退出
+	s.RunOnce()
 }
 

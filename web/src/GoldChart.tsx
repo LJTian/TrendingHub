@@ -10,6 +10,9 @@ export const GoldChart: React.FC<Props> = ({ items }) => {
     return <div className="status">暂无黄金价格数据</div>;
   }
 
+  // 单位：接口为人民币/盎司
+  const unit = "元/盎司";
+
   // 按时间从早到晚排序
   const sorted = [...items].sort(
     (a, b) =>
@@ -35,9 +38,9 @@ export const GoldChart: React.FC<Props> = ({ items }) => {
     <div className="gold-wrapper">
       <div className="gold-header">
         <div>
-          <div className="gold-title">黄金价格（XAU/USD）</div>
+          <div className="gold-title">黄金价格（XAU/人民币）</div>
           <div className="gold-subtitle">
-            最新价：<span className="gold-price">{last.hotScore.toFixed(2)}</span>
+            最新价：<span className="gold-price">{last.hotScore.toFixed(2)}</span> {unit}
           </div>
         </div>
         <div className="gold-time">

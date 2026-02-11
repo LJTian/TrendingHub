@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/LJTian/TrendingHub/internal/processor"
@@ -27,14 +28,16 @@ type Channel struct {
 }
 
 type News struct {
-	ID          string            `gorm:"primaryKey;size:40" json:"id"`
-	Title       string            `gorm:"size:512" json:"title"`
-	URL         string            `gorm:"size:1024;uniqueIndex" json:"url"`
-	Source      string            `gorm:"size:64;index" json:"source"` // 兼容老字段，代表渠道 code
-	Summary     string            `gorm:"size:1024" json:"summary"`
-	PublishedAt time.Time         `gorm:"index" json:"publishedAt"`
-	HotScore    float64           `gorm:"index" json:"hotScore"`
-	ExtraData   datatypes.JSONMap `gorm:"type:jsonb" json:"extraData"` // 存储原始扩展字段
+	ID            string            `gorm:"primaryKey;size:40" json:"id"`
+	Title         string            `gorm:"size:512" json:"title"`
+	URL           string            `gorm:"size:1024;uniqueIndex" json:"url"`
+	Source        string            `gorm:"size:64;index" json:"source"`
+	Summary       string            `gorm:"size:1024" json:"summary"`
+	Description   string            `gorm:"size:2048" json:"description"` // 详细介绍，悬停显示
+	PublishedAt   time.Time         `gorm:"index" json:"publishedAt"`
+	PublishedDate string            `gorm:"size:10;index" json:"publishedDate"` // 日期 YYYY-MM-DD，用于按日期展示
+	HotScore      float64           `gorm:"index" json:"hotScore"`
+	ExtraData     datatypes.JSONMap `gorm:"type:jsonb" json:"extraData"`
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -87,24 +90,53 @@ func (s *Store) EnsureChannel(code, name, baseURL string) (*Channel, error) {
 	return ch, nil
 }
 
+// 东八区，用于日期展示与筛选
+var locEast8 *time.Location
+
+func init() {
+	locEast8, _ = time.LoadLocation("Asia/Shanghai")
+	if locEast8 == nil {
+		locEast8 = time.FixedZone("CST", 8*3600)
+	}
+}
+
+// toValidUTF8 将字符串规范为合法 UTF-8，避免 PostgreSQL invalid byte sequence 错误（如百度等源可能含 GBK/混编）
+func toValidUTF8(s string) string {
+	return strings.ToValidUTF8(s, "\uFFFD")
+}
+
 // SaveBatch 保存一批新闻，已存在的根据 URL 忽略
 func (s *Store) SaveBatch(items []processor.ProcessedNews) error {
 	for _, it := range items {
+		pubDate := it.PublishedAt.In(locEast8).Format("2006-01-02")
+		title := toValidUTF8(it.Title)
+		summary := toValidUTF8(it.Summary)
+		description := toValidUTF8(it.Description)
 		n := &News{
-			ID:          it.ID,
-			Title:       it.Title,
-			URL:         it.URL,
-			Source:      it.Source,
-			Summary:     it.Summary,
-			PublishedAt: it.PublishedAt,
-			HotScore:    it.HotScore,
-			ExtraData:   datatypes.JSONMap(it.RawData),
+			ID:            it.ID,
+			Title:         title,
+			URL:           it.URL,
+			Source:        it.Source,
+			Summary:       summary,
+			Description:   description,
+			PublishedAt:   it.PublishedAt,
+			PublishedDate: pubDate,
+			HotScore:      it.HotScore,
+			ExtraData:     datatypes.JSONMap(it.RawData),
 		}
 
-		// 以 URL 作为幂等键，避免重复插入
+		// 以 URL 作为幂等键，避免重复插入；已存在时更新摘要/详细介绍等便于悬停显示
 		if err := s.DB.Where("url = ?", it.URL).FirstOrCreate(n).Error; err != nil {
 			return err
 		}
+		_ = s.DB.Model(n).Updates(map[string]any{
+			"title":          title,
+			"summary":        summary,
+			"description":    description,
+			"hot_score":      it.HotScore,
+			"published_at":   it.PublishedAt,
+			"published_date": pubDate,
+		}).Error
 	}
 
 	// 这里不做按 key 通配删除，完全依赖短 TTL 的缓存自然过期，
@@ -112,10 +144,11 @@ func (s *Store) SaveBatch(items []processor.ProcessedNews) error {
 	return nil
 }
 
-// ListNews 按渠道与排序方式返回新闻列表，并使用 Redis 做简单缓存
+// ListNews 按渠道、排序与可选日期返回新闻列表，并使用 Redis 做简单缓存
 // channel: 渠道 code，可为空
 // sort: latest(默认) / hot
-func (s *Store) ListNews(channel, sort string, limit int) ([]News, error) {
+// date: 可选，格式 2006-01-02，指定则只返回该日期的数据
+func (s *Store) ListNews(channel, sort string, limit int, date string) ([]News, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 20
 	}
@@ -124,7 +157,7 @@ func (s *Store) ListNews(channel, sort string, limit int) ([]News, error) {
 	}
 
 	ctx := context.Background()
-	cacheKey := fmt.Sprintf("news:list:%s:%s:%d", channel, sort, limit)
+	cacheKey := fmt.Sprintf("news:list:%s:%s:%d:%s", channel, sort, limit, date)
 
 	// L2: Redis 缓存
 	if s.Redis != nil {
@@ -140,29 +173,54 @@ func (s *Store) ListNews(channel, sort string, limit int) ([]News, error) {
 	var list []News
 	db := s.DB.Model(&News{})
 
-	// 特殊处理黄金：默认返回当天所有数据，按时间正序
-	if channel == "gold" {
-		now := time.Now()
-		startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	// 按日期筛选：只展示指定日期的数据（东八区日期；兼容 published_date 为空的旧数据）
+	if date != "" {
+		db = db.Where("(published_date = ? OR (TRIM(COALESCE(published_date, '')) = '' AND to_char(published_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD') = ?))", date, date)
+	}
 
-		db = db.Where("source = ?", "gold").
-			Where("published_at >= ?", startOfDay).
-			Order("published_at ASC")
+	// 金融渠道：黄金（当天） + A 股指数（最新），合并后总条数不超过 limit；“当天”按东八区
+	if channel == "gold" {
+		now := time.Now().In(locEast8)
+		startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, locEast8)
+		if date != "" {
+			if t, err := time.ParseInLocation("2006-01-02", date, locEast8); err == nil {
+				startOfDay = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, locEast8)
+			}
+		}
+
+		var goldList []News
+		q := s.DB.Model(&News{}).Where("source = ?", "gold")
+		if date != "" {
+			q = q.Where("(published_date = ? OR (TRIM(COALESCE(published_date, '')) = '' AND to_char(published_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD') = ?))", date, date)
+		} else {
+			q = q.Where("published_at >= ?", startOfDay)
+		}
+		q.Order("published_at ASC").Limit(500).Find(&goldList)
+
+		var ashareList []News
+		aq := s.DB.Model(&News{}).Where("source = ?", "ashare")
+		if date != "" {
+			aq = aq.Where("(published_date = ? OR (TRIM(COALESCE(published_date, '')) = '' AND to_char(published_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD') = ?))", date, date)
+		}
+		aq.Order("published_at DESC").Limit(20).Find(&ashareList)
+
+		list = append(goldList, ashareList...)
+		if len(list) > limit {
+			list = list[:limit]
+		}
 	} else {
 		if channel != "" {
 			db = db.Where("source = ?", channel)
 		}
-
 		switch sort {
 		case "hot":
 			db = db.Order("hot_score DESC").Order("published_at DESC")
 		default:
 			db = db.Order("published_at DESC")
 		}
-	}
-
-	if err := db.Limit(limit).Find(&list).Error; err != nil {
-		return nil, err
+		if err := db.Limit(limit).Find(&list).Error; err != nil {
+			return nil, err
+		}
 	}
 
 	// 回写缓存
@@ -177,6 +235,34 @@ func (s *Store) ListNews(channel, sort string, limit int) ([]News, error) {
 
 // ListLatest 兼容旧接口
 func (s *Store) ListLatest(limit int) ([]News, error) {
-	return s.ListNews("", "latest", limit)
+	return s.ListNews("", "latest", limit, "")
+}
+
+// ListPublishedDates 返回有数据的日期列表（倒序）。兼容旧数据：published_date 为空时用 published_at 的日期
+func (s *Store) ListPublishedDates(channel string, limit int) ([]string, error) {
+	if limit <= 0 || limit > 365 {
+		limit = 31
+	}
+	// 使用 COALESCE：有 published_date 用其值，否则用 published_at 的日期（东八区），保证历史数据也出现在日期列表
+	sql := `SELECT DISTINCT COALESCE(NULLIF(TRIM(published_date), ''), to_char(published_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD')) AS d FROM news`
+	args := []interface{}{}
+	if channel != "" {
+		sql += ` WHERE source = ?`
+		args = append(args, channel)
+	}
+	sql += ` ORDER BY d DESC LIMIT ?`
+	args = append(args, limit)
+
+	var rows []struct{ D string }
+	if err := s.DB.Raw(sql, args...).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	dates := make([]string, 0, len(rows))
+	for _, r := range rows {
+		if r.D != "" {
+			dates = append(dates, r.D)
+		}
+	}
+	return dates, nil
 }
 

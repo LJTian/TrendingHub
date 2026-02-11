@@ -40,6 +40,11 @@ func (s *Scheduler) Start() {
 	go s.runOnce()
 }
 
+// RunOnce 对外暴露的单次执行入口，方便手动触发采集
+func (s *Scheduler) RunOnce() {
+	s.runOnce()
+}
+
 func (s *Scheduler) runOnce() {
 	log.Println("start collect job...")
 

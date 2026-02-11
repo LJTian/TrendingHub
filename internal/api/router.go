@@ -21,6 +21,7 @@ func (s *Server) RegisterRoutes(r *gin.Engine) {
 
 	v1 := r.Group("/api/v1")
 	{
+		v1.GET("/news/dates", s.listNewsDates) // 必须放在 /news 前，避免被前缀匹配
 		v1.GET("/news", s.listNews)
 	}
 }
@@ -35,14 +36,18 @@ func (s *Server) listNews(c *gin.Context) {
 	if sort != "latest" && sort != "hot" {
 		sort = "latest"
 	}
+	date := c.Query("date") // 可选，格式 2006-01-02，按日期展示
 
 	limitStr := c.DefaultQuery("limit", "20")
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil || limit <= 0 {
 		limit = 20
 	}
+	if limit > 100 {
+		limit = 100
+	}
 
-	items, err := s.store.ListNews(channel, sort, limit)
+	items, err := s.store.ListNews(channel, sort, limit, date)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    "internal_error",
@@ -55,6 +60,33 @@ func (s *Server) listNews(c *gin.Context) {
 		"code":    "ok",
 		"message": "success",
 		"data":    items,
+	})
+}
+
+func (s *Server) listNewsDates(c *gin.Context) {
+	channel := c.Query("channel")
+	limitStr := c.DefaultQuery("limit", "31")
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit <= 0 {
+		limit = 31
+	}
+	if limit > 365 {
+		limit = 365
+	}
+
+	dates, err := s.store.ListPublishedDates(channel, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    "internal_error",
+			"message": "internal server error",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    "ok",
+		"message": "success",
+		"data":    dates,
 	})
 }
 
