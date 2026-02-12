@@ -71,19 +71,18 @@ func (g *GoldPriceFetcher) Fetch() ([]NewsItem, error) {
 		t = time.UnixMilli(data.TSJ)
 	}
 
-	item := NewsItem{
-		Title:       "黄金价格（XAU/人民币）",
-		URL:         apiURL,
-		Source:      "gold",
-		Summary:     "现货黄金 XAU/CNY 最新报价（元/盎司）",
-		Description: "国际现货黄金（XAU）人民币（CNY）实时价格，单位元/盎司，数据来自免费行情接口，仅供参考。",
-		PublishedAt: t,
-		HotScore:    price,
-		RawData: map[string]any{
-			"price": price,
-			"ts":    data.TSJ,
-		},
-	}
+		item := NewsItem{
+			Title:       "黄金价格（XAU/人民币）",
+			URL:         apiURL,
+			Source:      "gold",
+			Description: "国际现货黄金（XAU）人民币（CNY）实时价格，单位元/盎司，数据来自免费行情接口，仅供参考。",
+			PublishedAt: t,
+			HotScore:    price,
+			RawData: map[string]any{
+				"price": price,
+				"ts":    data.TSJ,
+			},
+		}
 
 	return []NewsItem{item}, nil
 }

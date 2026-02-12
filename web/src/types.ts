@@ -3,7 +3,6 @@ export interface NewsItem {
   title: string;
   url: string;
   source: string;
-  summary: string;
   description?: string;
   publishedAt: string;
   publishedDate?: string; // 日期 YYYY-MM-DD，用于按日期展示

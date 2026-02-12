@@ -66,7 +66,7 @@ func sourceLangForMyMemory(s string) string {
 	return "en"
 }
 
-// translateToChinese 将非中文介绍翻译成中文：优先 Google 翻译，失败则回退 MyMemory，再失败返回原文
+// translateToChinese 将非中文介绍翻译成中文：优先 MyMemory（稳定），Google 因 TKK 常失效已跳过，失败则返回原文
 func translateToChinese(text string) string {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -76,7 +76,13 @@ func translateToChinese(text string) string {
 		text = text[:translateMaxLen]
 	}
 
-	// 1) 优先使用 googletrans（auto 检测 + 译成简体中文）
+	// 1) 优先 MyMemory，避免因 Google 网页改版导致的 "couldn't found tkk" 拖慢整轮采集
+	out := translateViaMyMemory(text)
+	if out != "" {
+		return out
+	}
+
+	// 2) 可选：再试 Google（若库修复可恢复；目前常失败故仅作备用）
 	translated, err := googletrans.Translate(googletrans.TranslateParams{
 		Src:  "auto",
 		Dest: language.SimplifiedChinese.String(),
@@ -89,11 +95,6 @@ func translateToChinese(text string) string {
 		log.Printf("translate (google): %v", err)
 	}
 
-	// 2) 回退 MyMemory
-	out := translateViaMyMemory(text)
-	if out != "" {
-		return out
-	}
 	return text
 }
 

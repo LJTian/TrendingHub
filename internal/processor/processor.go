@@ -15,7 +15,6 @@ type ProcessedNews struct {
 	Title       string
 	URL         string
 	Source      string
-	Summary     string
 	Description string
 	PublishedAt time.Time
 	HotScore    float64
@@ -40,17 +39,18 @@ func (p *SimpleProcessor) Process(items []collector.NewsItem) []ProcessedNews {
 		}
 		seen[id] = struct{}{}
 
-		summary := strings.TrimSpace(it.Summary)
-		if summary == "" {
-			summary = it.Title
+		// description 统一在后端做长度控制，最多保留约 600 个字符
+		desc := truncateRunes(strings.TrimSpace(it.Description), 600)
+		if desc == "" {
+			// 兜底：没有提供 description 时，用标题作为简短介绍
+			desc = truncateRunes(strings.TrimSpace(it.Title), 600)
 		}
 		out = append(out, ProcessedNews{
 			ID:          id,
 			Title:       strings.TrimSpace(it.Title),
 			URL:         it.URL,
 			Source:      it.Source,
-			Summary:     summary,
-			Description: strings.TrimSpace(it.Description),
+			Description: desc,
 			PublishedAt: it.PublishedAt,
 			HotScore:    it.HotScore,
 			RawData:     it.RawData,
@@ -67,3 +67,18 @@ func hashURL(url string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// truncateRunes 按 rune 数截断字符串，避免中文被截成半个字符
+func truncateRunes(s string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	rs := []rune(s)
+	if len(rs) <= limit {
+		return s
+	}
+	return string(rs[:limit]) + "…"
+}

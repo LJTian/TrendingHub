@@ -1,205 +1,119 @@
 package collector
 
 import (
+	"encoding/json"
+	"io"
 	"log"
-	"strconv"
+	"net/http"
+	"regexp"
 	"strings"
 	"time"
-
-	"github.com/PuerkitoBio/goquery"
-	"github.com/gocolly/colly/v2"
 )
 
-// BaiduHotFetcher 抓取百度实时热搜榜
+// BaiduHotFetcher 抓取百度实时热搜榜。
+// 实现方式与 ourongxing/newsnow 一致：从 HTML 中提取 <!--s-data:...--> 内嵌 JSON，
+// 只使用其中的 word/rawUrl/desc，省去所有详情页与浏览器采集逻辑。
 type BaiduHotFetcher struct{}
 
 func (b *BaiduHotFetcher) Name() string {
 	return "baidu_hot"
 }
 
+// 结构体对应内嵌 JSON 中我们关心的字段
+type baiduState struct {
+	Data struct {
+		Cards []struct {
+			Content []struct {
+				IsTop  bool   `json:"isTop"`
+				Word   string `json:"word"`
+				RawURL string `json:"rawUrl"`
+				Desc   string `json:"desc"`
+			} `json:"content"`
+		} `json:"cards"`
+	} `json:"data"`
+}
+
 func (b *BaiduHotFetcher) Fetch() ([]NewsItem, error) {
 	log.Println("fetch Baidu Hot Search...")
 
-	c := colly.NewCollector(
-		colly.AllowedDomains("top.baidu.com"),
-		colly.UserAgent("TrendingHubBot/1.0"),
-	)
-	c.SetRequestTimeout(5 * time.Second)
+	resp, err := http.Get("https://top.baidu.com/board?tab=realtime")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
 
-	results := make([]NewsItem, 0, 50)
-	now := time.Now()
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("baidu_hot: unexpected status %d", resp.StatusCode)
+		return nil, nil
+	}
 
-	// 页面结构可能调整，此处基于当前的 DOM 结构做“尽力而为”的解析
-	c.OnHTML("div.category-wrap_iQLoo", func(e *colly.HTMLElement) {
-		title := strings.TrimSpace(e.ChildText("div.c-single-text-ellipsis"))
-		if title == "" {
-			return
-		}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	html := string(body)
 
-		relLink := ""
-		if href := e.ChildAttr("a", "href"); href != "" {
-			if strings.HasPrefix(href, "http") {
-				relLink = href
-			} else {
-				relLink = "https://top.baidu.com" + href
-			}
-		} else {
-			relLink = "https://top.baidu.com/board?tab=realtime"
-		}
+	// 从 <!--s-data: ... --> 中提取 JSON，正则与 newsnow 源码保持一致
+	re := regexp.MustCompile(`(?s)<!--s-data:(.*?)-->`)
+	matches := re.FindStringSubmatch(html)
+	if len(matches) < 2 {
+		log.Printf("baidu_hot: failed to extract s-data JSON")
+		return nil, nil
+	}
 
-		heatText := strings.TrimSpace(e.ChildText("div.hot-index_1Bl1a"))
-		heat := parseInt(heatText)
-
-		// 抓取红框内的“介绍”内容：优先匹配介绍/描述段落（百度页面结构可能变化）
-		desc := strings.TrimSpace(e.ChildText("div[class*='content']"))
-		if desc == "" {
-			desc = strings.TrimSpace(e.ChildText("div[class*='Content']"))
-		}
-		if desc == "" {
-			desc = strings.TrimSpace(e.ChildText("div[class*='desc']"))
-		}
-		if desc == "" {
-			desc = strings.TrimSpace(e.ChildText("div[class*='abstract']"))
-		}
-		if desc == "" {
-			desc = strings.TrimSpace(e.ChildText("div[class*='intro']"))
-		}
-		if desc == "" {
-			desc = strings.TrimSpace(e.ChildText("div[class*='summary']"))
-		}
-		if desc == "" {
-			desc = strings.TrimSpace(e.ChildText("div[class*='detail']"))
-		}
-		if desc == "" {
-			desc = strings.TrimSpace(e.ChildText("p"))
-		}
-		if desc == "" {
-			desc = strings.TrimSpace(e.ChildText("span[class*='content']"))
-		}
-		if desc == "" {
-			desc = strings.TrimSpace(e.ChildText("span[class*='desc']"))
-		}
-		// 红框介绍常在标题下方：取标题所在块之后的第一个长文本块
-		if desc == "" {
-			desc = firstLongTextAfter(e, "div.c-single-text-ellipsis", 20, title, heatText)
-		}
-		// 兜底：从当前块内取非标题、非热度的最长段落（红框式介绍文案）
-		if desc == "" {
-			desc = fallbackBaiduDesc(e, title, heatText)
-		}
-		// 去掉“查看更多”等链接文案，只保留正文
-		desc = cleanBaiduDesc(desc)
-
-		summary := desc
-		if len(summary) > 120 {
-			summary = summary[:120] + "…"
-		}
-		if summary == "" {
-			summary = title
-		}
-
-		item := NewsItem{
-			Title:       title,
-			URL:         relLink,
-			Source:      "baidu",
-			Summary:     summary,
-			Description: desc,
-			PublishedAt: now,
-			HotScore:    float64(heat),
-			RawData: map[string]any{
-				"heat": heatText,
-			},
-		}
-		results = append(results, item)
-	})
-
-	if err := c.Visit("https://top.baidu.com/board?tab=realtime"); err != nil {
-		log.Printf("fetch Baidu Hot Search failed: %v", err)
+	var state baiduState
+	if err := json.Unmarshal([]byte(matches[1]), &state); err != nil {
+		log.Printf("baidu_hot: unmarshal s-data JSON error: %v", err)
 		return nil, err
 	}
 
+	if len(state.Data.Cards) == 0 || len(state.Data.Cards[0].Content) == 0 {
+		return nil, nil
+	}
+
+	contents := state.Data.Cards[0].Content
+	now := time.Now()
+	results := make([]NewsItem, 0, len(contents))
+
+	for idx, c := range contents {
+		if c.IsTop {
+			continue
+		}
+		title := strings.TrimSpace(c.Word)
+		if title == "" {
+			continue
+		}
+
+		url := strings.TrimSpace(c.RawURL)
+		if url == "" {
+			url = "https://top.baidu.com/board?tab=realtime"
+		}
+
+		desc := strings.TrimSpace(c.Desc)
+		if desc == "" {
+			desc = title
+		}
+
+		// 与 newsnow 类似，这里没有真实“指数”字段，用排序位置近似热度（越靠前越大）
+		hot := float64(len(contents) - idx)
+
+		item := NewsItem{
+			Title:       title,
+			URL:         url,
+			Source:      "baidu",
+			Description: desc,
+			PublishedAt: now,
+			HotScore:    hot,
+			RawData: map[string]any{
+				"rank": idx + 1,
+			},
+		}
+		results = append(results, item)
+	}
+
 	if len(results) == 0 {
-		log.Printf("fetch Baidu Hot Search got 0 items")
+		log.Printf("baidu_hot: no items parsed from s-data JSON")
 	}
 
 	return results, nil
-}
-
-// cleanBaiduDesc 去掉简介中的“查看更多”等链接文案，只保留正文
-func cleanBaiduDesc(s string) string {
-	s = strings.TrimSpace(s)
-	for _, cut := range []string{"[查看更多>]", "[查看更多&gt;]", "查看更多", "…[查看更多>]", "…[查看更多&gt;]"} {
-		if idx := strings.Index(s, cut); idx != -1 {
-			s = strings.TrimSpace(s[:idx])
-		}
-	}
-	return s
-}
-
-// firstLongTextAfter 从 selector 匹配到的元素之后的兄弟节点中取第一个足够长的文本（用于红框介绍）
-func firstLongTextAfter(e *colly.HTMLElement, selector string, minLen int, exclude ...string) string {
-	sel := e.DOM.Find(selector).First()
-	for i := 0; i < 10; i++ {
-		sel = sel.Next()
-		if sel.Length() == 0 {
-			break
-		}
-		t := strings.TrimSpace(sel.Text())
-		if len(t) < minLen {
-			continue
-		}
-		skip := false
-		for _, ex := range exclude {
-			if ex != "" && t == ex {
-				skip = true
-				break
-			}
-		}
-		if !skip {
-			return t
-		}
-	}
-	return ""
-}
-
-// fallbackBaiduDesc 从当前条目内找“红框”式介绍：非标题、非热度的最长段落（优先像介绍文案的）
-func fallbackBaiduDesc(e *colly.HTMLElement, title, heatText string) string {
-	var best string
-	minLen := 20 // 介绍至少有一定长度
-
-	e.DOM.Find("div, p, span").Each(func(i int, s *goquery.Selection) {
-		t := strings.TrimSpace(s.Text())
-		if t == "" || t == title || t == heatText || len(t) < minLen {
-			return
-		}
-		// 排除纯数字（热度）
-		if _, err := strconv.Atoi(strings.TrimSpace(strings.ReplaceAll(t, ",", ""))); err == nil && len(t) < 30 {
-			return
-		}
-		// 优先保留更长、更像介绍段落的（含逗号/句号等）
-		if len(t) > len(best) {
-			best = t
-		}
-	})
-	return best
-}
-
-func parseInt(s string) int {
-	s = strings.TrimSpace(strings.ReplaceAll(s, ",", ""))
-	if s == "" {
-		return 0
-	}
-	// 去掉可能的“万”等单位，只保留数字部分
-	end := 0
-	for ; end < len(s); end++ {
-		if s[end] < '0' || s[end] > '9' {
-			break
-		}
-	}
-	numPart := s[:end]
-	n, err := strconv.Atoi(numPart)
-	if err != nil {
-		return 0
-	}
-	return n
 }

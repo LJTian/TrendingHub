@@ -97,16 +97,15 @@ func (a *AShareIndexFetcher) Fetch() ([]NewsItem, error) {
 		if len(parts) >= 4 {
 			changeStr = strings.TrimSpace(parts[3]) // 涨跌幅%
 		}
-		summary := name + " " + priceStr
+		desc := name + " " + priceStr
 		if changeStr != "" {
-			summary += " " + changeStr + "%"
+			desc += " " + changeStr + "%"
 		}
 		item := NewsItem{
 			Title:       name,
 			URL:         "https://finance.sina.com.cn/realstock/index/" + code + ".html",
 			Source:      "ashare",
-			Summary:     summary,
-			Description: "A 股指数实时行情，数据来自新浪财经，仅供参考。",
+			Description: desc + "，A 股指数实时行情，数据来自新浪财经，仅供参考。",
 			PublishedAt: now,
 			HotScore:    price,
 			RawData: map[string]any{

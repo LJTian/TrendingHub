@@ -28,12 +28,12 @@ type Channel struct {
 }
 
 type News struct {
-	ID            string            `gorm:"primaryKey;size:40" json:"id"`
-	Title         string            `gorm:"size:512" json:"title"`
-	URL           string            `gorm:"size:1024;uniqueIndex" json:"url"`
-	Source        string            `gorm:"size:64;index" json:"source"`
-	Summary       string            `gorm:"size:1024" json:"summary"`
-	Description   string            `gorm:"size:2048" json:"description"` // 详细介绍，悬停显示
+	ID     string `gorm:"primaryKey;size:40" json:"id"`
+	Title  string `gorm:"size:512" json:"title"`
+	URL    string `gorm:"size:1024;uniqueIndex" json:"url"`
+	Source string `gorm:"size:64;index" json:"source"`
+	// 只保留一段介绍文案；长度控制在约 200 个字符（在 processor 中按 rune 截断）
+	Description   string            `gorm:"size:600" json:"description"` // 详细介绍，悬停显示
 	PublishedAt   time.Time         `gorm:"index" json:"publishedAt"`
 	PublishedDate string            `gorm:"size:10;index" json:"publishedDate"` // 日期 YYYY-MM-DD，用于按日期展示
 	HotScore      float64           `gorm:"index" json:"hotScore"`
@@ -105,19 +105,36 @@ func toValidUTF8(s string) string {
 	return strings.ToValidUTF8(s, "\uFFFD")
 }
 
+// truncateRunesDB 按 rune 数截断字符串，确保不会超过数据库字段长度（例如 varchar(600)）。
+// 这是对上游 Processor 的双保险，防止外部服务返回异常长文本导致入库失败。
+func truncateRunesDB(s string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	rs := []rune(s)
+	if len(rs) <= limit {
+		return s
+	}
+	return string(rs[:limit])
+}
+
 // SaveBatch 保存一批新闻，已存在的根据 URL 忽略
 func (s *Store) SaveBatch(items []processor.ProcessedNews) error {
 	for _, it := range items {
 		pubDate := it.PublishedAt.In(locEast8).Format("2006-01-02")
 		title := toValidUTF8(it.Title)
-		summary := toValidUTF8(it.Summary)
 		description := toValidUTF8(it.Description)
+		// 再次做长度保护，确保不会超过 varchar(600) 的限制
+		description = truncateRunesDB(description, 600)
 		n := &News{
 			ID:            it.ID,
 			Title:         title,
 			URL:           it.URL,
 			Source:        it.Source,
-			Summary:       summary,
 			Description:   description,
 			PublishedAt:   it.PublishedAt,
 			PublishedDate: pubDate,
@@ -131,7 +148,6 @@ func (s *Store) SaveBatch(items []processor.ProcessedNews) error {
 		}
 		_ = s.DB.Model(n).Updates(map[string]any{
 			"title":          title,
-			"summary":        summary,
 			"description":    description,
 			"hot_score":      it.HotScore,
 			"published_at":   it.PublishedAt,
@@ -223,10 +239,11 @@ func (s *Store) ListNews(channel, sort string, limit int, date string) ([]News, 
 		}
 	}
 
-	// 回写缓存
+	// 回写缓存（5 分钟，减轻每天首次打开时的 DB 压力）
+	const listCacheTTL = 5 * time.Minute
 	if s.Redis != nil && len(list) > 0 {
 		if bs, err := json.Marshal(list); err == nil {
-			_ = s.Redis.Set(ctx, cacheKey, bs, 60*time.Second).Err()
+			_ = s.Redis.Set(ctx, cacheKey, bs, listCacheTTL).Err()
 		}
 	}
 
@@ -238,11 +255,22 @@ func (s *Store) ListLatest(limit int) ([]News, error) {
 	return s.ListNews("", "latest", limit, "")
 }
 
-// ListPublishedDates 返回有数据的日期列表（倒序）。兼容旧数据：published_date 为空时用 published_at 的日期
+// ListPublishedDates 返回有数据的日期列表（倒序）。兼容旧数据：published_date 为空时用 published_at 的日期；结果缓存 5 分钟
 func (s *Store) ListPublishedDates(channel string, limit int) ([]string, error) {
 	if limit <= 0 || limit > 365 {
 		limit = 31
 	}
+	ctx := context.Background()
+	cacheKey := fmt.Sprintf("news:dates:%s:%d", channel, limit)
+	if s.Redis != nil {
+		if bs, err := s.Redis.Get(ctx, cacheKey).Bytes(); err == nil {
+			var cached []string
+			if err := json.Unmarshal(bs, &cached); err == nil {
+				return cached, nil
+			}
+		}
+	}
+
 	// 使用 COALESCE：有 published_date 用其值，否则用 published_at 的日期（东八区），保证历史数据也出现在日期列表
 	sql := `SELECT DISTINCT COALESCE(NULLIF(TRIM(published_date), ''), to_char(published_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD')) AS d FROM news`
 	args := []interface{}{}
@@ -263,6 +291,10 @@ func (s *Store) ListPublishedDates(channel string, limit int) ([]string, error) 
 			dates = append(dates, r.D)
 		}
 	}
+	if s.Redis != nil && len(dates) > 0 {
+		if bs, err := json.Marshal(dates); err == nil {
+			_ = s.Redis.Set(ctx, cacheKey, bs, 5*time.Minute).Err()
+		}
+	}
 	return dates, nil
 }
-

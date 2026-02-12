@@ -7,8 +7,8 @@ type NewsItem struct {
 	Title       string
 	URL         string
 	Source      string
-	Summary     string // 简短摘要，悬停可显
-	Description string // 详细介绍，可选
+	// 只保留 description：统一用一段介绍文案，前端自行控制截断展示
+	Description string
 	PublishedAt time.Time
 	HotScore    float64
 	RawData     map[string]any

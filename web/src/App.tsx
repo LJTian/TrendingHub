@@ -3,32 +3,33 @@ import { fetchNews, fetchNewsDates } from "./api";
 import type { NewsItem } from "./types";
 import { GoldChart } from "./GoldChart";
 import { AshareBlock } from "./AshareBlock";
+import { Calendar } from "./Calendar";
 
 const CHANNELS = [
-  { code: "", label: "全部" },
+  { code: "", label: "首页" },
   { code: "github", label: "GitHub Trending" },
   { code: "baidu", label: "百度热搜" },
   { code: "gold", label: "金融" }
 ];
 
-type SortOption = "latest" | "hot";
-
 /** 东八区今天的日期 YYYY-MM-DD，与后端一致 */
 function todayEast8(): string {
-  return new Date()
-    .toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" });
+  return new Date().toLocaleDateString("sv-SE", {
+    timeZone: "Asia/Shanghai"
+  });
 }
 
-function formatDateLabel(d: string) {
-  if (d === todayEast8()) return "今天";
-  const [, m, day] = d.split("-");
-  return `${m}/${day}`;
+/** 将文本按字符数截断（按 Unicode 字符计算，避免中文被截断成半个字） */
+function truncateText(text: string | undefined, limit: number): string {
+  if (!text) return "";
+  const chars = Array.from(text);
+  if (chars.length <= limit) return text;
+  return chars.slice(0, limit).join("") + "…";
 }
 
 export const App: React.FC = () => {
   const [channel, setChannel] = useState<string>("");
-  const [sort, setSort] = useState<SortOption>("hot");
-  const [date, setDate] = useState<string>("");
+  const [date, setDate] = useState<string>(() => todayEast8());
   const [dates, setDates] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +42,7 @@ export const App: React.FC = () => {
       const isGold = channel === "gold";
       const data = await fetchNews({
         channel: channel || undefined,
-        sort,
+        sort: "hot",
         limit: isGold ? 100 : 30,
         date: date || undefined
       });
@@ -56,7 +57,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channel, sort, date]);
+  }, [channel, date]);
 
   useEffect(() => {
     fetchNewsDates({ channel: channel || undefined, limit: 31 })
@@ -76,55 +77,42 @@ export const App: React.FC = () => {
 
   return (
     <div className="page">
-      <header className="header">
-        <div>
+      <aside className="sidebar">
+        <div className="site-title">
           <h1>TrendingHub</h1>
-          <p className="subtitle">一站式查看多源热点（GitHub / 百度 / 金融等）</p>
+          <p className="subtitle">多源热点聚合</p>
         </div>
-        <div className="controls">
-          <select
-            value={channel}
-            onChange={(e) => setChannel(e.target.value)}
-          >
+        <nav className="sidebar-nav">
+          <span className="sidebar-label">频道</span>
+          <ul>
             {CHANNELS.map((c) => (
-              <option key={c.code || "all"} value={c.code}>
-                {c.label}
-              </option>
+              <li key={c.code || "all"}>
+                <button
+                  type="button"
+                  className={channel === c.code ? "active" : ""}
+                  onClick={() => setChannel(c.code)}
+                >
+                  {c.label}
+                </button>
+              </li>
             ))}
-          </select>
-          <select
+          </ul>
+        </nav>
+        <div className="sidebar-block sidebar-block-calendar">
+          <span className="sidebar-label">日期</span>
+          <Calendar
             value={date}
-            onChange={(e) => setDate(e.target.value)}
-            title="按日期展示"
-          >
-            <option value="">全部日期</option>
-            {dates.map((d) => (
-              <option key={d} value={d}>
-                {formatDateLabel(d)}
-              </option>
-            ))}
-          </select>
-          <div className="segmented">
-            <button
-              className={sort === "latest" ? "active" : ""}
-              onClick={() => setSort("latest")}
-            >
-              最新
-            </button>
-            <button
-              className={sort === "hot" ? "active" : ""}
-              onClick={() => setSort("hot")}
-            >
-              热度
-            </button>
-          </div>
-          <button className="refresh" onClick={() => void load()}>
-            手动刷新
-          </button>
+            onChange={setDate}
+            availableDates={dates}
+          />
         </div>
-      </header>
+        <button type="button" className="refresh" onClick={() => void load()}>
+          手动刷新
+        </button>
+      </aside>
 
-      <main className="main">
+      <div className="content">
+        <main className="main">
         {loading && <div className="status">加载中...</div>}
         {error && !loading && <div className="status error">{error}</div>}
         {!loading && !error && items.length === 0 && (
@@ -133,16 +121,26 @@ export const App: React.FC = () => {
 
         {channel === "gold" ? (
           <>
-            <GoldChart items={items.filter((i) => i.source === "gold")} />
-            <AshareBlock items={items.filter((i) => i.source === "ashare")} />
+            <section className="section">
+              <h2 className="section-title">黄金 · 当日走势</h2>
+              <GoldChart items={items.filter((i) => i.source === "gold")} />
+            </section>
+            <section className="section">
+              <AshareBlock items={items.filter((i) => i.source === "ashare")} />
+            </section>
           </>
         ) : (
-          <ul className="list">
+          <section className="section">
+            <h2 className="section-title">
+              {channel
+                ? CHANNELS.find((c) => c.code === channel)?.label ?? "今日热点"
+                : "今日热点"}
+            </h2>
+            <ul className="list">
             {items.map((item, index) => (
               <li
                 key={item.id}
                 className="card"
-                title={item.summary || item.title}
               >
                 <div className="card-header">
                   <span className="rank">{index + 1}</span>
@@ -151,7 +149,6 @@ export const App: React.FC = () => {
                     target="_blank"
                     rel="noreferrer"
                     className="title"
-                    title={item.summary || item.title}
                   >
                     {item.title}
                   </a>
@@ -166,21 +163,42 @@ export const App: React.FC = () => {
                       hour12: false
                     })}
                   </span>
+                  {item.source === "github" && (
+                    <>
+                      <span className="dot" />
+                      <span className="card-stars" title="Stars">
+                        ★ {Math.round(item.hotScore).toLocaleString()}
+                      </span>
+                    </>
+                  )}
                 </div>
-                {(item.summary && item.summary !== item.title) && (
-                  <p className="summary">{item.summary}</p>
-                )}
                 <div className="card-tooltip" role="tooltip">
                   <div className="card-tooltip-title">详细信息</div>
                   <div className="card-tooltip-body">
-                    {item.description || item.summary || item.title || "暂无介绍"}
+                    <div className="card-tooltip-main">
+                      {truncateText(
+                        item.description || item.title || "暂无介绍",
+                        600
+                      )}
+                    </div>
+                    <div className="card-tooltip-extra">
+                      <p>
+                        来源：{item.source} · 热度：
+                        {Math.round(item.hotScore)} · 发布时间：
+                        {new Date(item.publishedAt).toLocaleString("zh-CN", {
+                          hour12: false
+                        })}
+                      </p>
+                    </div>
                   </div>
                 </div>
               </li>
             ))}
-          </ul>
+            </ul>
+          </section>
         )}
-      </main>
+        </main>
+      </div>
     </div>
   );
 };

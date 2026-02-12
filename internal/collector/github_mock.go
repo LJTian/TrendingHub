@@ -46,10 +46,6 @@ func (g *GitHubTrendingMock) Fetch() ([]NewsItem, error) {
 
 		// 从 Trending 页抓取仓库简短描述（p 标签）
 		pageDesc := strings.TrimSpace(e.ChildText("p"))
-		summary := repoName
-		if stars > 0 {
-			summary = repoName + " · " + starsText + " stars"
-		}
 		desc := pageDesc
 		if desc == "" {
 			desc = "GitHub Trending 仓库，点击标题前往查看详情。"
@@ -62,7 +58,6 @@ func (g *GitHubTrendingMock) Fetch() ([]NewsItem, error) {
 			Title:       repoName,
 			URL:         fullURL,
 			Source:      "github",
-			Summary:     summary,
 			Description: desc,
 			PublishedAt: time.Now(),
 			HotScore:    float64(stars),

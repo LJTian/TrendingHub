@@ -2,6 +2,8 @@ package scheduler
 
 import (
 	"log"
+	"sync"
+	"time"
 
 	"github.com/LJTian/TrendingHub/internal/collector"
 	"github.com/LJTian/TrendingHub/internal/processor"
@@ -36,8 +38,11 @@ func New(spec string, fetchers []collector.Fetcher, p *processor.SimpleProcessor
 
 func (s *Scheduler) Start() {
 	s.cron.Start()
-	// 启动时先异步执行一轮，避免等待下一次 cron 周期
-	go s.runOnce()
+	// 延迟执行首轮采集，避免与用户首次打开页面的请求争抢资源，首屏加载更快
+	const startupDelay = 15 * time.Second
+	time.AfterFunc(startupDelay, func() {
+		go s.runOnce()
+	})
 }
 
 // RunOnce 对外暴露的单次执行入口，方便手动触发采集
@@ -48,29 +53,37 @@ func (s *Scheduler) RunOnce() {
 func (s *Scheduler) runOnce() {
 	log.Println("start collect job...")
 
-	var all []collector.NewsItem
-
+	var wg sync.WaitGroup
 	for _, f := range s.fetchers {
-		log.Printf("fetch from %s...", f.Name())
-		items, err := f.Fetch()
-		if err != nil {
-			log.Printf("fetch %s error: %v", f.Name(), err)
-			continue
-		}
-		all = append(all, items...)
+		fetcher := f
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			name := fetcher.Name()
+			log.Printf("fetch from %s...", name)
+			items, err := fetcher.Fetch()
+			if err != nil {
+				log.Printf("fetch %s error: %v", name, err)
+				return
+			}
+			if len(items) == 0 {
+				log.Printf("fetch %s got 0 items", name)
+				return
+			}
+			processed := s.processor.Process(items)
+			if len(processed) == 0 {
+				return
+			}
+			if err := s.store.SaveBatch(processed); err != nil {
+				log.Printf("save %s batch error: %v", name, err)
+				return
+			}
+			// 条数 = 本轮采集解析到的数量（非“新增数”，已存在会更新）
+			log.Printf("%s done, fetched=%d saved=%d items", name, len(items), len(processed))
+		}()
 	}
 
-	processed := s.processor.Process(all)
-	if len(processed) == 0 {
-		log.Println("no news to save")
-		return
-	}
-
-	if err := s.store.SaveBatch(processed); err != nil {
-		log.Printf("save batch error: %v", err)
-		return
-	}
-
-	log.Printf("collect job done, saved %d items", len(processed))
+	wg.Wait()
+	log.Println("collect job done (all sources)")
 }
 

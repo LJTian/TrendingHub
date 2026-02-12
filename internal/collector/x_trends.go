@@ -54,7 +54,6 @@ func (x *XTrendsFetcher) Fetch() ([]NewsItem, error) {
 			Title:       t.title,
 			URL:         t.url,
 			Source:      "x",
-			Summary:     t.title,
 			Description: "X (Twitter) 热搜话题，点击在 X 上搜索。",
 			PublishedAt: now,
 			HotScore:    hotScore,
