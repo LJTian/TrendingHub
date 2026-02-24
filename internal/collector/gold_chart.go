@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -14,8 +15,8 @@ import (
 const goldMaxResponseBytes = 64 * 1024 // 64KB，黄金 API 响应很小
 var goldAllowedHosts = []string{"data-asg.goldprice.org", "data-goldprice.org"}
 
-// GoldPriceFetcher 从外部 API 拉取黄金价格（人民币/克 或 人民币/盎司，由接口决定）。
-// 默认使用 data-asg.goldprice.org 的 CNY 接口（人民币/盎司），
+// GoldPriceFetcher 从外部 API 拉取黄金价格，存储为人民币/盎司；前端展示时按 1 盎司=31.1034768 克换算为元/克。
+// 默认使用 data-asg.goldprice.org 的 CNY 接口，
 // 可通过环境变量 GOLD_API_URL 覆盖。
 type GoldPriceFetcher struct{}
 
@@ -25,8 +26,8 @@ func (g *GoldPriceFetcher) Name() string {
 
 // 对应 data-asg.goldprice.org/dbXRates/CNY 的响应结构
 type goldAPIResp struct {
-	TS    int64 `json:"ts"`
-	TSJ   int64 `json:"tsj"`
+	TS    int64  `json:"ts"`
+	TSJ   int64  `json:"tsj"`
 	Date  string `json:"date"`
 	Items []struct {
 		Curr     string  `json:"curr"`
@@ -63,7 +64,7 @@ func (g *GoldPriceFetcher) Fetch() ([]NewsItem, error) {
 		log.Printf("gold price response has no items")
 		return nil, nil
 	}
-	price := data.Items[0].XAUPrice
+	pricePerOz := data.Items[0].XAUPrice
 
 	// 使用接口返回的时间戳，如果解析失败则退回当前时间
 	t := time.Now()
@@ -71,18 +72,21 @@ func (g *GoldPriceFetcher) Fetch() ([]NewsItem, error) {
 		t = time.UnixMilli(data.TSJ)
 	}
 
-		item := NewsItem{
-			Title:       "黄金价格（XAU/人民币）",
-			URL:         apiURL,
-			Source:      "gold",
-			Description: "国际现货黄金（XAU）人民币（CNY）实时价格，单位元/盎司，数据来自免费行情接口，仅供参考。",
-			PublishedAt: t,
-			HotScore:    price,
-			RawData: map[string]any{
-				"price": price,
-				"ts":    data.TSJ,
-			},
-		}
+	// 每次采集使用带时间戳的 URL，使存储层插入新行而非更新同一条，从而保留历史用于折线图
+	itemURL := apiURL + "?t=" + strconv.FormatInt(t.UnixMilli(), 10)
+
+	item := NewsItem{
+		Title:       "黄金价格（XAU/人民币）",
+		URL:         itemURL,
+		Source:      "gold",
+		Description: "国际现货黄金（XAU）人民币（CNY）实时价格，单位元/克（由元/盎司换算），数据来自免费行情接口，仅供参考。",
+		PublishedAt: t,
+		HotScore:    pricePerOz, // 存元/盎司，前端按 1 盎司=31.1034768 克换算为元/克展示
+		RawData: map[string]any{
+			"price": pricePerOz,
+			"ts":    data.TSJ,
+		},
+	}
 
 	return []NewsItem{item}, nil
 }

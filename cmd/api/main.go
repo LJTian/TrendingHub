@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"log"
+	"time"
 
 	"github.com/LJTian/TrendingHub/internal/api"
 	"github.com/LJTian/TrendingHub/internal/collector"
@@ -30,22 +32,38 @@ func main() {
 	if _, err := store.EnsureChannel("gold", "金融", ""); err != nil {
 		log.Fatalf("ensure channel gold failed: %v", err)
 	}
-
-	// 注册采集器（X 热搜因检索不稳定暂未接入）
-	fetchers := []collector.Fetcher{
-		&collector.GitHubTrendingMock{},
-		&collector.BaiduHotFetcher{},
-		&collector.GoldPriceFetcher{},
-		&collector.AShareIndexFetcher{},
+	if _, err := store.EnsureChannel("hackernews", "Hacker News", "https://news.ycombinator.com"); err != nil {
+		log.Fatalf("ensure channel hackernews failed: %v", err)
 	}
 
-	// Processor & Scheduler
+	// 确保默认城市"北京"存在
+	if err := store.AddWeatherCity("北京"); err != nil {
+		log.Printf("warn: ensure default weather city: %v", err)
+	}
+
+	// 启动前同步预取天气，保证首次请求有缓存
+	refreshWeather(store)
+
+	// 按数据源更新频率配置独立的采集周期
+	jobs := []scheduler.FetcherJob{
+		{Fetcher: &collector.BaiduHotFetcher{}, CronSpec: "*/30 * * * *"},
+		{Fetcher: &collector.GoldPriceFetcher{}, CronSpec: "*/30 * * * *"},
+		{Fetcher: &collector.AShareIndexFetcher{}, CronSpec: "*/30 * * * *"},
+		{Fetcher: &collector.HackerNewsFetcher{}, CronSpec: "0 * * * *"},
+		{Fetcher: &collector.GitHubTrendingMock{}, CronSpec: "0 */2 * * *"},
+	}
+
 	p := processor.NewSimpleProcessor()
-	s, err := scheduler.New(cfg.CronSpec, fetchers, p, store)
+	s, err := scheduler.New(jobs, p, store)
 	if err != nil {
 		log.Fatalf("init scheduler failed: %v", err)
 	}
 	s.Start()
+
+	// 天气定时刷新：每小时从数据库读取城市列表并全量获取
+	if _, err := s.Cron().AddFunc("0 * * * *", func() { refreshWeather(store) }); err != nil {
+		log.Printf("warn: add weather cron failed: %v", err)
+	}
 
 	// API
 	r := gin.Default()
@@ -59,3 +77,29 @@ func main() {
 	}
 }
 
+func refreshWeather(store *storage.Store) {
+	cities, err := store.ListWeatherCities()
+	if err != nil {
+		log.Printf("weather: list cities error: %v", err)
+		return
+	}
+	if len(cities) == 0 {
+		return
+	}
+	log.Printf("weather: refreshing %d cities...", len(cities))
+	for _, c := range cities {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		data, err := api.FetchWeatherFromWttr(ctx, c.City)
+		cancel()
+		if err != nil {
+			log.Printf("weather: fetch %s error: %v", c.City, err)
+			continue
+		}
+		if err := store.SaveWeatherCache(c.City, string(data)); err != nil {
+			log.Printf("weather: cache %s error: %v", c.City, err)
+			continue
+		}
+		log.Printf("weather: cached %s (%d bytes)", c.City, len(data))
+	}
+	log.Println("weather: refresh done")
+}

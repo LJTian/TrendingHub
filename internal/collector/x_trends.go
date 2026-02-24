@@ -16,6 +16,12 @@ const xTrendsURL = "https://trends24.in/"
 const xTrendsMaxItems = 50
 const xTrendsMaxBodyBytes = 2 << 20 // 2MB，防止超大 HTML 导致 DoS
 
+var (
+	xTrendsRe1      = regexp.MustCompile(`<a\s+[^>]*href="(https://twitter\.com/search\?q=[^"]+)"[^>]*>([^<]+)</a>`)
+	xTrendsRe2      = regexp.MustCompile(`href="(https://twitter\.com/search\?q=([^"]+))"`)
+	xGetdaytrendsRe = regexp.MustCompile(`<a\s+href="https://getdaytrends\.com/trend/([^"]+)/?"[^>]*>([^<]+)</a>`)
+)
+
 // XTrendsFetcher 抓取 X (Twitter) 热搜，数据来自 trends24.in（全球榜）
 type XTrendsFetcher struct{}
 
@@ -146,9 +152,7 @@ func (x *XTrendsFetcher) parseTrendLinks(html string) []xTrend {
 	seen := make(map[string]bool)
 	var list []xTrend
 
-	// 格式1: <a href="https://twitter.com/search?q=..." ...>标题</a>（class 可有可无、顺序任意）
-	re1 := regexp.MustCompile(`<a\s+[^>]*href="(https://twitter\.com/search\?q=[^"]+)"[^>]*>([^<]+)</a>`)
-	for _, m := range re1.FindAllStringSubmatch(html, -1) {
+	for _, m := range xTrendsRe1.FindAllStringSubmatch(html, -1) {
 		if len(m) != 3 {
 			continue
 		}
@@ -161,10 +165,8 @@ func (x *XTrendsFetcher) parseTrendLinks(html string) []xTrend {
 		list = append(list, xTrend{title: title, url: toXSearchURL(href)})
 	}
 
-	// 格式2: 仅有 href，用 q= 后的值解码作为标题（兜底）
 	if len(list) == 0 {
-		re2 := regexp.MustCompile(`href="(https://twitter\.com/search\?q=([^"]+))"`)
-		for _, m := range re2.FindAllStringSubmatch(html, -1) {
+		for _, m := range xTrendsRe2.FindAllStringSubmatch(html, -1) {
 			if len(m) < 3 || seen[m[1]] {
 				continue
 			}
@@ -184,8 +186,14 @@ func (x *XTrendsFetcher) parseTrendLinks(html string) []xTrend {
 }
 
 func toXSearchURL(twitterSearchURL string) string {
-	if strings.Contains(twitterSearchURL, "twitter.com") {
-		return "https://x.com/search?" + strings.TrimPrefix(twitterSearchURL, "https://twitter.com/search?")
+	u, err := url.Parse(twitterSearchURL)
+	if err != nil {
+		return twitterSearchURL
+	}
+	if strings.Contains(u.Host, "twitter.com") {
+		u.Host = "x.com"
+		u.Scheme = "https"
+		return u.String()
 	}
 	return twitterSearchURL
 }
@@ -196,15 +204,13 @@ func (x *XTrendsFetcher) fetchFromGetdaytrends() []xTrend {
 	if err != nil {
 		return nil
 	}
-	// 匹配 <a href="https://getdaytrends.com/trend/XXX/"> 或 /trend/XXX/ ，取链接文本或路径最后一段为标题
-	re := regexp.MustCompile(`<a\s+href="https://getdaytrends\.com/trend/([^"]+)/?"[^>]*>([^<]+)</a>`)
 	seen := make(map[string]bool)
 	var list []xTrend
-	for _, m := range re.FindAllStringSubmatch(body, -1) {
+	for _, m := range xGetdaytrendsRe.FindAllStringSubmatch(body, -1) {
 		if len(m) < 3 {
 			continue
 		}
-		pathPart := m[1]           // URL 编码的话题名
+		pathPart := m[1] // URL 编码的话题名
 		linkText := strings.TrimSpace(m[2])
 		if linkText == "" || len(linkText) > 200 {
 			continue

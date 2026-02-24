@@ -52,6 +52,13 @@ body {
 .site-title {
   padding-bottom: 16px;
   border-bottom: 1px solid var(--cursor-border);
+  cursor: pointer;
+  border-radius: var(--cursor-radius);
+  transition: opacity 0.15s;
+}
+
+.site-title:hover {
+  opacity: 0.7;
 }
 
 .site-title h1 {
@@ -306,6 +313,409 @@ body {
   color: var(--cursor-accent);
 }
 
+/* ========== 天气卡片 ========== */
+.weather-card {
+  border: 1px solid var(--cursor-border);
+  border-radius: var(--cursor-radius-lg);
+  background: var(--cursor-bg);
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.weather-card--loading {
+  padding: 20px 24px;
+  text-align: center;
+  color: var(--cursor-text-light);
+  font-size: 13px;
+}
+
+/* 标签栏 */
+.weather-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--cursor-border);
+  gap: 8px;
+}
+
+.weather-tabs-list {
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  gap: 0;
+  min-width: 0;
+}
+
+.weather-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  color: var(--cursor-text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s;
+}
+
+.weather-tab:hover {
+  color: var(--cursor-accent);
+}
+
+.weather-tab.active {
+  color: var(--cursor-accent);
+  font-weight: 500;
+  border-bottom-color: var(--cursor-accent);
+}
+
+.weather-tab-close {
+  font-size: 14px;
+  line-height: 1;
+  color: var(--cursor-text-light);
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+  padding: 0 2px;
+  border-radius: 3px;
+}
+
+.weather-tab:hover .weather-tab-close {
+  opacity: 1;
+}
+
+.weather-tab-close:hover {
+  color: #b91c1c;
+  background: rgba(185, 28, 28, 0.08);
+}
+
+.weather-add-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 6px 0;
+}
+
+.weather-city-input {
+  width: 80px;
+  padding: 4px 8px;
+  border: 1px solid var(--cursor-border-strong);
+  border-radius: var(--cursor-radius);
+  background: var(--cursor-surface);
+  color: var(--cursor-text);
+  font-size: 12px;
+  outline: none;
+}
+
+.weather-city-input:focus {
+  border-color: var(--cursor-accent);
+}
+
+.weather-add-btn {
+  border: none;
+  background: rgba(234, 88, 12, 0.08);
+  color: var(--cursor-accent);
+  font-size: 14px;
+  font-weight: 500;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--cursor-radius);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.weather-add-btn:hover:not(:disabled) {
+  background: rgba(234, 88, 12, 0.15);
+}
+
+.weather-add-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.weather-empty {
+  padding: 20px 16px;
+  text-align: center;
+  color: var(--cursor-text-light);
+  font-size: 13px;
+}
+
+/* 内容面板 */
+.weather-panel {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+}
+
+.weather-current {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.weather-current-icon {
+  font-size: 28px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.weather-current-temp {
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--cursor-text);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.weather-current-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.weather-current-desc {
+  font-size: 13px;
+  color: var(--cursor-text-muted);
+}
+
+.weather-current-meta {
+  font-size: 11px;
+  color: var(--cursor-text-light);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.weather-forecast {
+  display: flex;
+  gap: 14px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.weather-forecast-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.weather-forecast-date {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--cursor-text-muted);
+}
+
+.weather-forecast-icon {
+  font-size: 18px;
+}
+
+.weather-forecast-temp {
+  font-size: 11px;
+  color: var(--cursor-text-light);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ========== 首页仪表板 ========== */
+.home {
+  padding: 20px 24px 24px;
+}
+
+.home-title {
+  margin: 0 0 20px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--cursor-text);
+  letter-spacing: -0.01em;
+}
+
+.home-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+.home-card {
+  border: 1px solid var(--cursor-border);
+  border-radius: var(--cursor-radius-lg);
+  background: var(--cursor-bg);
+  overflow: hidden;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.home-card:hover {
+  border-color: var(--cursor-border-strong);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.home-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--cursor-border);
+}
+
+.home-card-name {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--cursor-text);
+}
+
+.home-card-more {
+  border: none;
+  background: none;
+  color: var(--cursor-accent);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.home-card-more:hover {
+  background: rgba(234, 88, 12, 0.08);
+}
+
+.home-card-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px 0;
+}
+
+.home-card-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px;
+  transition: background 0.1s;
+}
+
+.home-card-item:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.home-card-rank {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--cursor-border);
+  color: var(--cursor-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.home-card-link {
+  flex: 1;
+  min-width: 0;
+  color: var(--cursor-text);
+  font-size: 13px;
+  text-decoration: none;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-card-link:hover {
+  color: var(--cursor-accent);
+}
+
+.home-card-stars {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--cursor-accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.home-card-empty {
+  padding: 20px 16px;
+  text-align: center;
+  color: var(--cursor-text-light);
+  font-size: 13px;
+}
+
+/* ========== 首页金融预览 ========== */
+.home-finance {
+  padding: 8px 16px 12px;
+}
+
+.home-finance-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--cursor-border);
+}
+
+.home-finance-row:last-child {
+  border-bottom: none;
+}
+
+.home-finance-label {
+  flex: 1;
+  font-size: 13px;
+  color: var(--cursor-text);
+  font-weight: 500;
+}
+
+.home-finance-value {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--cursor-text);
+}
+
+.home-finance-value.gold {
+  color: #d97706;
+}
+
+.home-finance-value.up {
+  color: #ef4444;
+}
+
+.home-finance-value.down {
+  color: #22c55e;
+}
+
+.home-finance-change {
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  padding: 1px 5px;
+  border-radius: 3px;
+  min-width: 52px;
+  text-align: right;
+}
+
+.home-finance-change.up {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.home-finance-change.down {
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.08);
+}
+
 /* ========== 右侧主内容区 ========== */
 .content {
   flex: 1;
@@ -423,6 +833,10 @@ body {
 }
 
 .card-stars {
+  color: var(--cursor-accent);
+}
+
+.card-comments {
   color: var(--cursor-accent);
 }
 
@@ -689,6 +1103,25 @@ body {
 
   .content {
     padding: 16px 12px 32px;
+  }
+
+  .weather-panel {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .weather-forecast {
+    margin-left: 0;
+  }
+
+  .weather-tabs {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .home-grid {
+    grid-template-columns: 1fr;
   }
 
   .card {

@@ -3,7 +3,6 @@ package scheduler
 import (
 	"log"
 	"sync"
-	"time"
 
 	"github.com/LJTian/TrendingHub/internal/collector"
 	"github.com/LJTian/TrendingHub/internal/processor"
@@ -11,26 +10,35 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
+// FetcherJob 将采集器与独立的 cron 调度绑定
+type FetcherJob struct {
+	Fetcher  collector.Fetcher
+	CronSpec string
+}
+
 type Scheduler struct {
 	cron      *cron.Cron
-	fetchers  []collector.Fetcher
+	jobs      []FetcherJob
 	processor *processor.SimpleProcessor
 	store     *storage.Store
 }
 
-func New(spec string, fetchers []collector.Fetcher, p *processor.SimpleProcessor, store *storage.Store) (*Scheduler, error) {
+func New(jobs []FetcherJob, p *processor.SimpleProcessor, store *storage.Store) (*Scheduler, error) {
 	c := cron.New()
 
 	s := &Scheduler{
 		cron:      c,
-		fetchers:  fetchers,
+		jobs:      jobs,
 		processor: p,
 		store:     store,
 	}
 
-	_, err := c.AddFunc(spec, s.runOnce)
-	if err != nil {
-		return nil, err
+	for _, job := range jobs {
+		j := job
+		if _, err := c.AddFunc(j.CronSpec, func() { s.runFetcher(j.Fetcher) }); err != nil {
+			return nil, err
+		}
+		log.Printf("scheduled %s with cron: %s", j.Fetcher.Name(), j.CronSpec)
 	}
 
 	return s, nil
@@ -38,52 +46,51 @@ func New(spec string, fetchers []collector.Fetcher, p *processor.SimpleProcessor
 
 func (s *Scheduler) Start() {
 	s.cron.Start()
-	// 延迟执行首轮采集，避免与用户首次打开页面的请求争抢资源，首屏加载更快
-	const startupDelay = 15 * time.Second
-	time.AfterFunc(startupDelay, func() {
-		go s.runOnce()
-	})
+	go s.RunOnce()
 }
 
-// RunOnce 对外暴露的单次执行入口，方便手动触发采集
+// Cron 暴露底层 cron 实例，方便外部注册额外任务
+func (s *Scheduler) Cron() *cron.Cron {
+	return s.cron
+}
+
+// RunOnce 并发执行所有采集器一次
 func (s *Scheduler) RunOnce() {
-	s.runOnce()
-}
-
-func (s *Scheduler) runOnce() {
-	log.Println("start collect job...")
-
+	log.Println("start collect job (all sources)...")
 	var wg sync.WaitGroup
-	for _, f := range s.fetchers {
-		fetcher := f
+	for _, job := range s.jobs {
+		j := job
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			name := fetcher.Name()
-			log.Printf("fetch from %s...", name)
-			items, err := fetcher.Fetch()
-			if err != nil {
-				log.Printf("fetch %s error: %v", name, err)
-				return
-			}
-			if len(items) == 0 {
-				log.Printf("fetch %s got 0 items", name)
-				return
-			}
-			processed := s.processor.Process(items)
-			if len(processed) == 0 {
-				return
-			}
-			if err := s.store.SaveBatch(processed); err != nil {
-				log.Printf("save %s batch error: %v", name, err)
-				return
-			}
-			// 条数 = 本轮采集解析到的数量（非“新增数”，已存在会更新）
-			log.Printf("%s done, fetched=%d saved=%d items", name, len(items), len(processed))
+			s.runFetcher(j.Fetcher)
 		}()
 	}
-
 	wg.Wait()
 	log.Println("collect job done (all sources)")
 }
 
+func (s *Scheduler) runFetcher(f collector.Fetcher) {
+	name := f.Name()
+	log.Printf("fetch from %s...", name)
+
+	items, err := f.Fetch()
+	if err != nil {
+		log.Printf("fetch %s error: %v", name, err)
+		return
+	}
+	if len(items) == 0 {
+		log.Printf("fetch %s got 0 items", name)
+		return
+	}
+
+	processed := s.processor.Process(items)
+	if len(processed) == 0 {
+		return
+	}
+	if err := s.store.SaveBatch(processed); err != nil {
+		log.Printf("save %s batch error: %v", name, err)
+		return
+	}
+	log.Printf("%s done, fetched=%d saved=%d items", name, len(items), len(processed))
+}

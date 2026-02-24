@@ -2,6 +2,7 @@ package collector
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -9,19 +10,15 @@ import (
 	"strings"
 	"time"
 	"unicode"
-
-	"github.com/mind1949/googletrans"
-	"golang.org/x/text/language"
 )
 
-const translateMaxResponseBytes = 256 * 1024 // 256KB，翻译 API 响应较小
+const translateMaxResponseBytes = 256 * 1024
 
 const (
 	translateMaxLen        = 500
-	translateClientTimeout = 5 * time.Second
+	translateClientTimeout = 20 * time.Second
 )
 
-// isMostlyChinese 判断文本是否主要为汉语（含 CJK 字符比例或存在中文即视为“是”）
 func isMostlyChinese(s string) bool {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -56,7 +53,6 @@ func isCJK(r rune) bool {
 	return false
 }
 
-// sourceLangForMyMemory 根据字符猜测源语言，供 MyMemory 使用（不支持 auto）
 func sourceLangForMyMemory(s string) string {
 	for _, r := range s {
 		if r >= 0x3040 && r <= 0x309f || r >= 0x30a0 && r <= 0x30ff {
@@ -66,36 +62,80 @@ func sourceLangForMyMemory(s string) string {
 	return "en"
 }
 
-// translateToChinese 将非中文介绍翻译成中文：优先 MyMemory（稳定），Google 因 TKK 常失效已跳过，失败则返回原文
+// translateToChinese 依次尝试 Google Translate 直接 API → MyMemory，均失败则返回原文
 func translateToChinese(text string) string {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return text
 	}
-	if len(text) > translateMaxLen {
-		text = text[:translateMaxLen]
+	if rs := []rune(text); len(rs) > translateMaxLen {
+		text = string(rs[:translateMaxLen])
 	}
 
-	// 1) 优先 MyMemory，避免因 Google 网页改版导致的 "couldn't found tkk" 拖慢整轮采集
-	out := translateViaMyMemory(text)
-	if out != "" {
+	if out := translateViaGoogle(text); out != "" {
 		return out
 	}
 
-	// 2) 可选：再试 Google（若库修复可恢复；目前常失败故仅作备用）
-	translated, err := googletrans.Translate(googletrans.TranslateParams{
-		Src:  "auto",
-		Dest: language.SimplifiedChinese.String(),
-		Text: text,
-	})
-	if err == nil && strings.TrimSpace(translated.Text) != "" {
-		return strings.TrimSpace(translated.Text)
-	}
-	if err != nil {
-		log.Printf("translate (google): %v", err)
+	if out := translateViaMyMemory(text); out != "" {
+		return out
 	}
 
 	return text
+}
+
+// translateViaGoogle 使用 Google Translate 公开 API（client=gtx，无需 TKK/密钥）
+func translateViaGoogle(text string) string {
+	apiURL := fmt.Sprintf(
+		"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=%s",
+		url.QueryEscape(text),
+	)
+	req, err := http.NewRequest(http.MethodGet, apiURL, nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+
+	client := &http.Client{Timeout: translateClientTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("translate (google-gtx): %v", err)
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("translate (google-gtx): status %d", resp.StatusCode)
+		return ""
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, translateMaxResponseBytes))
+	if err != nil {
+		return ""
+	}
+
+	// 响应格式: [[["翻译文本","原文",...],...],...]
+	var raw []any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		log.Printf("translate (google-gtx): decode error: %v", err)
+		return ""
+	}
+
+	var result strings.Builder
+	outer, ok := raw[0].([]any)
+	if !ok {
+		return ""
+	}
+	for _, seg := range outer {
+		pair, ok := seg.([]any)
+		if !ok || len(pair) < 1 {
+			continue
+		}
+		if s, ok := pair[0].(string); ok {
+			result.WriteString(s)
+		}
+	}
+
+	return strings.TrimSpace(result.String())
 }
 
 func translateViaMyMemory(text string) string {
@@ -112,6 +152,7 @@ func translateViaMyMemory(text string) string {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		log.Printf("translate (mymemory): status %d", resp.StatusCode)
 		return ""
 	}
 	var out struct {

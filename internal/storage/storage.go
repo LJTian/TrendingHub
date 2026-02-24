@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,6 +15,34 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+// 各频道对应独立表名，写入/查询均按 source 路由到对应表
+var (
+	allowedSources = []string{"github", "baidu", "gold", "ashare", "x", "hackernews"}
+	sourceToTable  = map[string]string{
+		"github": "news_github", "baidu": "news_baidu", "gold": "news_gold",
+		"ashare": "news_ashare", "x": "news_x", "hackernews": "news_hackernews",
+	}
+)
+
+func newsTable(source string) string {
+	if t, ok := sourceToTable[source]; ok {
+		return t
+	}
+	return ""
+}
+
+func sortByPublishedAtDesc(list []News) {
+	sort.Slice(list, func(i, j int) bool { return list[i].PublishedAt.After(list[j].PublishedAt) })
+}
+func sortByHotScoreDesc(list []News) {
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].HotScore != list[j].HotScore {
+			return list[i].HotScore > list[j].HotScore
+		}
+		return list[i].PublishedAt.After(list[j].PublishedAt)
+	})
+}
 
 // Channel 描述一个数据源，例如 weibo / zhihu / github
 type Channel struct {
@@ -54,8 +83,15 @@ func NewStore(dsn, redisAddr string) (*Store, error) {
 		return nil, err
 	}
 
-	if err := db.AutoMigrate(&Channel{}, &News{}); err != nil {
+	if err := db.AutoMigrate(&Channel{}, &News{}, &WeatherCity{}, &WeatherCache{}); err != nil {
 		return nil, err
+	}
+	// 按频道分表：与 news 同结构，便于按 source 路由
+	for _, src := range allowedSources {
+		tbl := sourceToTable[src]
+		if err := db.Exec(fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (LIKE news INCLUDING ALL)", tbl)).Error; err != nil {
+			return nil, fmt.Errorf("create table %s: %w", tbl, err)
+		}
 	}
 
 	rdb := redis.NewClient(&redis.Options{
@@ -71,20 +107,15 @@ func NewStore(dsn, redisAddr string) (*Store, error) {
 	return &Store{DB: db, Redis: rdb}, nil
 }
 
-// EnsureChannel 确保某个渠道存在
+// EnsureChannel 确保某个渠道存在，使用 FirstOrCreate 避免并发竞态
 func (s *Store) EnsureChannel(code, name, baseURL string) (*Channel, error) {
-	ch := &Channel{}
-	if err := s.DB.Where("code = ?", code).First(ch).Error; err == nil {
-		return ch, nil
-	}
-
-	ch = &Channel{
+	ch := &Channel{
 		Code:    code,
 		Name:    name,
 		BaseURL: baseURL,
 		Status:  "active",
 	}
-	if err := s.DB.Create(ch).Error; err != nil {
+	if err := s.DB.Where("code = ?", code).FirstOrCreate(ch).Error; err != nil {
 		return nil, err
 	}
 	return ch, nil
@@ -122,13 +153,16 @@ func truncateRunesDB(s string, limit int) string {
 	return string(rs[:limit])
 }
 
-// SaveBatch 保存一批新闻，已存在的根据 URL 忽略
+// SaveBatch 按频道保存到对应分表（news_github / news_baidu / news_gold / news_ashare / news_x），已存在的按 URL 更新
 func (s *Store) SaveBatch(items []processor.ProcessedNews) error {
 	for _, it := range items {
+		tbl := newsTable(it.Source)
+		if tbl == "" {
+			continue
+		}
 		pubDate := it.PublishedAt.In(locEast8).Format("2006-01-02")
 		title := toValidUTF8(it.Title)
 		description := toValidUTF8(it.Description)
-		// 再次做长度保护，确保不会超过 varchar(600) 的限制
 		description = truncateRunesDB(description, 600)
 		n := &News{
 			ID:            it.ID,
@@ -142,21 +176,19 @@ func (s *Store) SaveBatch(items []processor.ProcessedNews) error {
 			ExtraData:     datatypes.JSONMap(it.RawData),
 		}
 
-		// 以 URL 作为幂等键，避免重复插入；已存在时更新摘要/详细介绍等便于悬停显示
-		if err := s.DB.Where("url = ?", it.URL).FirstOrCreate(n).Error; err != nil {
+		if err := s.DB.Table(tbl).Where("url = ?", it.URL).FirstOrCreate(n).Error; err != nil {
 			return err
 		}
-		_ = s.DB.Model(n).Updates(map[string]any{
+		if err := s.DB.Table(tbl).Model(n).Updates(map[string]any{
 			"title":          title,
 			"description":    description,
 			"hot_score":      it.HotScore,
 			"published_at":   it.PublishedAt,
 			"published_date": pubDate,
-		}).Error
+		}).Error; err != nil {
+			return fmt.Errorf("update %s %s: %w", tbl, it.URL, err)
+		}
 	}
-
-	// 这里不做按 key 通配删除，完全依赖短 TTL 的缓存自然过期，
-	// 避免使用无效的通配符删除以及增加额外的 Redis 扫描复杂度。
 	return nil
 }
 
@@ -185,16 +217,11 @@ func (s *Store) ListNews(channel, sort string, limit int, date string) ([]News, 
 		}
 	}
 
-	// DB 兜底
-	var list []News
-	db := s.DB.Model(&News{})
+	// 按频道分表查询
+	dateCond := date != ""
+	dateWhere := "(published_date = ? OR (TRIM(COALESCE(published_date, '')) = '' AND to_char(published_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD') = ?))"
 
-	// 按日期筛选：只展示指定日期的数据（东八区日期；兼容 published_date 为空的旧数据）
-	if date != "" {
-		db = db.Where("(published_date = ? OR (TRIM(COALESCE(published_date, '')) = '' AND to_char(published_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD') = ?))", date, date)
-	}
-
-	// 金融渠道：黄金（当天） + A 股指数（最新），合并后总条数不超过 limit；“当天”按东八区
+	// 金融渠道：从 news_gold + news_ashare 合并
 	if channel == "gold" {
 		now := time.Now().In(locEast8)
 		startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, locEast8)
@@ -203,40 +230,78 @@ func (s *Store) ListNews(channel, sort string, limit int, date string) ([]News, 
 				startOfDay = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, locEast8)
 			}
 		}
-
-		var goldList []News
-		q := s.DB.Model(&News{}).Where("source = ?", "gold")
-		if date != "" {
-			q = q.Where("(published_date = ? OR (TRIM(COALESCE(published_date, '')) = '' AND to_char(published_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD') = ?))", date, date)
+		var goldList, ashareList []News
+		q := s.DB.Table("news_gold")
+		if dateCond {
+			q = q.Where(dateWhere, date, date)
 		} else {
 			q = q.Where("published_at >= ?", startOfDay)
 		}
 		q.Order("published_at ASC").Limit(500).Find(&goldList)
-
-		var ashareList []News
-		aq := s.DB.Model(&News{}).Where("source = ?", "ashare")
-		if date != "" {
-			aq = aq.Where("(published_date = ? OR (TRIM(COALESCE(published_date, '')) = '' AND to_char(published_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD') = ?))", date, date)
+		aq := s.DB.Table("news_ashare")
+		if dateCond {
+			aq = aq.Where(dateWhere, date, date)
 		}
-		aq.Order("published_at DESC").Limit(20).Find(&ashareList)
-
-		list = append(goldList, ashareList...)
+		aq.Order("published_at DESC").Limit(100).Find(&ashareList)
+		list := append(goldList, ashareList...)
 		if len(list) > limit {
 			list = list[:limit]
 		}
-	} else {
-		if channel != "" {
-			db = db.Where("source = ?", channel)
+		// 回写缓存
+		if s.Redis != nil && len(list) > 0 {
+			if bs, err := json.Marshal(list); err == nil {
+				_ = s.Redis.Set(ctx, cacheKey, bs, 5*time.Minute).Err()
+			}
 		}
-		switch sort {
-		case "hot":
-			db = db.Order("hot_score DESC").Order("published_at DESC")
-		default:
-			db = db.Order("published_at DESC")
+		return list, nil
+	}
+
+	// 单频道：从对应分表查
+	if channel != "" {
+		tbl := newsTable(channel)
+		if tbl != "" {
+			var list []News
+			db := s.DB.Table(tbl)
+			if dateCond {
+				db = db.Where(dateWhere, date, date)
+			}
+			switch sort {
+			case "hot":
+				db = db.Order("hot_score DESC").Order("published_at DESC")
+			default:
+				db = db.Order("published_at DESC")
+			}
+			if err := db.Limit(limit).Find(&list).Error; err != nil {
+				return nil, err
+			}
+			if s.Redis != nil && len(list) > 0 {
+				if bs, err := json.Marshal(list); err == nil {
+					_ = s.Redis.Set(ctx, cacheKey, bs, 5*time.Minute).Err()
+				}
+			}
+			return list, nil
 		}
-		if err := db.Limit(limit).Find(&list).Error; err != nil {
-			return nil, err
+	}
+
+	// channel == ""：从所有分表合并后排序截断
+	var list []News
+	for _, tbl := range sourceToTable {
+		var part []News
+		db := s.DB.Table(tbl)
+		if dateCond {
+			db = db.Where(dateWhere, date, date)
 		}
+		db.Order("published_at DESC").Limit(limit * 2).Find(&part)
+		list = append(list, part...)
+	}
+	switch sort {
+	case "hot":
+		sortByHotScoreDesc(list)
+	default:
+		sortByPublishedAtDesc(list)
+	}
+	if len(list) > limit {
+		list = list[:limit]
 	}
 
 	// 回写缓存（5 分钟，减轻每天首次打开时的 DB 压力）
@@ -271,25 +336,43 @@ func (s *Store) ListPublishedDates(channel string, limit int) ([]string, error) 
 		}
 	}
 
-	// 使用 COALESCE：有 published_date 用其值，否则用 published_at 的日期（东八区），保证历史数据也出现在日期列表
-	sql := `SELECT DISTINCT COALESCE(NULLIF(TRIM(published_date), ''), to_char(published_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD')) AS d FROM news`
-	args := []interface{}{}
-	if channel != "" {
-		sql += ` WHERE source = ?`
-		args = append(args, channel)
-	}
-	sql += ` ORDER BY d DESC LIMIT ?`
-	args = append(args, limit)
-
-	var rows []struct{ D string }
-	if err := s.DB.Raw(sql, args...).Scan(&rows).Error; err != nil {
-		return nil, err
-	}
-	dates := make([]string, 0, len(rows))
-	for _, r := range rows {
-		if r.D != "" {
-			dates = append(dates, r.D)
+	// 从分表取有数据的日期；channel 为空时合并所有表
+	baseSQL := `SELECT DISTINCT COALESCE(NULLIF(TRIM(published_date), ''), to_char(published_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD')) AS d FROM `
+	var tables []string
+	if channel == "" {
+		for _, t := range sourceToTable {
+			tables = append(tables, t)
 		}
+	} else if channel == "gold" {
+		tables = []string{"news_gold", "news_ashare"}
+	} else if t := newsTable(channel); t != "" {
+		tables = []string{t}
+	}
+	if len(tables) == 0 {
+		if s.Redis != nil {
+			_ = s.Redis.Set(ctx, cacheKey, "[]", 5*time.Minute).Err()
+		}
+		return []string{}, nil
+	}
+	dateSet := make(map[string]struct{})
+	for _, tbl := range tables {
+		var rows []struct{ D string }
+		if err := s.DB.Raw(baseSQL+tbl+` ORDER BY d DESC LIMIT ?`, limit).Scan(&rows).Error; err != nil {
+			continue
+		}
+		for _, r := range rows {
+			if r.D != "" {
+				dateSet[r.D] = struct{}{}
+			}
+		}
+	}
+	dates := make([]string, 0, len(dateSet))
+	for d := range dateSet {
+		dates = append(dates, d)
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(dates)))
+	if len(dates) > limit {
+		dates = dates[:limit]
 	}
 	if s.Redis != nil && len(dates) > 0 {
 		if bs, err := json.Marshal(dates); err == nil {

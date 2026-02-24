@@ -101,9 +101,10 @@ func (a *AShareIndexFetcher) Fetch() ([]NewsItem, error) {
 		if changeStr != "" {
 			desc += " " + changeStr + "%"
 		}
+		itemURL := "https://finance.sina.com.cn/realstock/index/" + code + ".html?t=" + strconv.FormatInt(now.UnixMilli(), 10)
 		item := NewsItem{
 			Title:       name,
-			URL:         "https://finance.sina.com.cn/realstock/index/" + code + ".html",
+			URL:         itemURL,
 			Source:      "ashare",
 			Description: desc + "，A 股指数实时行情，数据来自新浪财经，仅供参考。",
 			PublishedAt: now,

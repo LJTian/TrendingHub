@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+const baiduMaxResponseBytes = 2 << 20 // 2MB
+
+var baiduSDataRe = regexp.MustCompile(`(?s)<!--s-data:(.*?)-->`)
+
 // BaiduHotFetcher 抓取百度实时热搜榜。
 // 实现方式与 ourongxing/newsnow 一致：从 HTML 中提取 <!--s-data:...--> 内嵌 JSON，
 // 只使用其中的 word/rawUrl/desc，省去所有详情页与浏览器采集逻辑。
@@ -36,7 +40,8 @@ type baiduState struct {
 func (b *BaiduHotFetcher) Fetch() ([]NewsItem, error) {
 	log.Println("fetch Baidu Hot Search...")
 
-	resp, err := http.Get("https://top.baidu.com/board?tab=realtime")
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get("https://top.baidu.com/board?tab=realtime")
 	if err != nil {
 		return nil, err
 	}
@@ -47,15 +52,13 @@ func (b *BaiduHotFetcher) Fetch() ([]NewsItem, error) {
 		return nil, nil
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, baiduMaxResponseBytes))
 	if err != nil {
 		return nil, err
 	}
 	html := string(body)
 
-	// 从 <!--s-data: ... --> 中提取 JSON，正则与 newsnow 源码保持一致
-	re := regexp.MustCompile(`(?s)<!--s-data:(.*?)-->`)
-	matches := re.FindStringSubmatch(html)
+	matches := baiduSDataRe.FindStringSubmatch(html)
 	if len(matches) < 2 {
 		log.Printf("baidu_hot: failed to extract s-data JSON")
 		return nil, nil

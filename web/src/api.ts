@@ -1,4 +1,4 @@
-import type { ApiResponse, NewsItem } from "./types";
+import type { ApiResponse, NewsItem, WeatherItem } from "./types";
 
 const BASE_URL = "";
 
@@ -68,5 +68,29 @@ export async function fetchNewsDates(params: {
     return [];
   }
   return json.data;
+}
+
+/** 获取所有关注城市的天气数据 */
+export async function fetchAllWeather(): Promise<WeatherItem[]> {
+  const res = await fetch(`${BASE_URL}/api/v1/weather`);
+  if (!res.ok) return [];
+  const json = (await res.json()) as ApiResponse<WeatherItem[]>;
+  return json.data ?? [];
+}
+
+/** 添加关注城市 */
+export async function addWeatherCity(city: string): Promise<void> {
+  await fetch(`${BASE_URL}/api/v1/weather/cities`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ city })
+  });
+}
+
+/** 移除关注城市 */
+export async function removeWeatherCity(city: string): Promise<void> {
+  await fetch(`${BASE_URL}/api/v1/weather/cities/${encodeURIComponent(city)}`, {
+    method: "DELETE"
+  });
 }
 

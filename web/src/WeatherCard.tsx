@@ -1,0 +1,167 @@
+import React, { useEffect, useState, useCallback } from "react";
+import { fetchAllWeather, addWeatherCity, removeWeatherCity } from "./api";
+import type { WeatherItem, WttrResponse } from "./types";
+
+const WEATHER_ICONS: Record<string, string> = {
+  "113": "☀️", "116": "⛅", "119": "☁️", "122": "☁️",
+  "143": "🌫️", "176": "🌦️", "179": "🌨️", "182": "🌨️",
+  "185": "🌨️", "200": "⛈️", "227": "🌨️", "230": "❄️",
+  "248": "🌫️", "260": "🌫️", "263": "🌦️", "266": "🌧️",
+  "281": "🌧️", "284": "🌧️", "293": "🌦️", "296": "🌧️",
+  "299": "🌧️", "302": "🌧️", "305": "🌧️", "308": "🌧️",
+  "311": "🌧️", "314": "🌧️", "317": "🌨️", "320": "🌨️",
+  "323": "🌨️", "326": "🌨️", "329": "❄️", "332": "❄️",
+  "335": "❄️", "338": "❄️", "350": "🌨️", "353": "🌦️",
+  "356": "🌧️", "359": "🌧️", "362": "🌨️", "365": "🌨️",
+  "368": "🌨️", "371": "❄️", "374": "🌨️", "377": "🌨️",
+  "386": "⛈️", "389": "⛈️", "392": "⛈️", "395": "❄️",
+};
+
+function icon(code: string): string {
+  return WEATHER_ICONS[code] ?? "🌡️";
+}
+
+function getDayOfWeek(dateStr: string): string {
+  const d = new Date(dateStr + "T00:00:00");
+  return ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][d.getDay()];
+}
+
+function getMidDayWeather(day: WttrResponse["weather"][0]) {
+  const noon = day.hourly.find((h) => h.time === "1200") ?? day.hourly[0];
+  if (!noon) return { desc: "—", code: "113" };
+  return { desc: noon.weatherDesc[0]?.value?.trim() ?? "—", code: noon.weatherCode };
+}
+
+export const WeatherCard: React.FC = () => {
+  const [items, setItems] = useState<WeatherItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [activeCity, setActiveCity] = useState<string>("");
+  const [input, setInput] = useState("");
+  const [adding, setAdding] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await fetchAllWeather();
+      setItems(data);
+      if (data.length > 0 && !data.find((d) => d.city === activeCity)) {
+        setActiveCity(data[0].city);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [activeCity]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const handleAdd = async () => {
+    const city = input.trim();
+    if (!city) return;
+    setAdding(true);
+    try {
+      await addWeatherCity(city);
+      setInput("");
+      setTimeout(() => {
+        void load().then(() => setActiveCity(city));
+      }, 2000);
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const handleRemove = async (city: string) => {
+    await removeWeatherCity(city);
+    setItems((prev) => {
+      const next = prev.filter((i) => i.city !== city);
+      if (activeCity === city && next.length > 0) {
+        setActiveCity(next[0].city);
+      }
+      return next;
+    });
+  };
+
+  if (loading && items.length === 0) {
+    return <div className="weather-card weather-card--loading">加载天气中...</div>;
+  }
+
+  const active = items.find((i) => i.city === activeCity);
+  const cur = active?.weather?.current_condition?.[0];
+
+  return (
+    <div className="weather-card">
+      {/* 标签栏 */}
+      <div className="weather-tabs">
+        <div className="weather-tabs-list">
+          {items.map((item) => (
+            <button
+              key={item.city}
+              type="button"
+              className={`weather-tab ${item.city === activeCity ? "active" : ""}`}
+              onClick={() => setActiveCity(item.city)}
+            >
+              {item.city}
+              <span
+                className="weather-tab-close"
+                onClick={(e) => { e.stopPropagation(); handleRemove(item.city); }}
+                title="移除"
+              >
+                ×
+              </span>
+            </button>
+          ))}
+        </div>
+        <div className="weather-add-bar">
+          <input
+            className="weather-city-input"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleAdd()}
+            placeholder="添加城市"
+          />
+          <button
+            type="button"
+            className="weather-add-btn"
+            onClick={handleAdd}
+            disabled={adding || !input.trim()}
+          >
+            {adding ? "..." : "+"}
+          </button>
+        </div>
+      </div>
+
+      {/* 内容区 */}
+      {!active || !cur ? (
+        <div className="weather-empty">暂无天气数据</div>
+      ) : (
+        <div className="weather-panel">
+          <div className="weather-current">
+            <span className="weather-current-icon">{icon(cur.weatherCode)}</span>
+            <span className="weather-current-temp">{cur.temp_C}°</span>
+            <div className="weather-current-info">
+              <span className="weather-current-desc">
+                {cur.weatherDesc[0]?.value?.trim()}
+              </span>
+              <span className="weather-current-meta">
+                体感{cur.FeelsLikeC}° 湿度{cur.humidity}% 风{cur.winddir16Point} {cur.windspeedKmph}km/h
+              </span>
+            </div>
+          </div>
+          <div className="weather-forecast">
+            {active.weather.weather.map((day) => {
+              const m = getMidDayWeather(day);
+              return (
+                <div key={day.date} className="weather-forecast-day">
+                  <span className="weather-forecast-date">{getDayOfWeek(day.date)}</span>
+                  <span className="weather-forecast-icon">{icon(m.code)}</span>
+                  <span className="weather-forecast-temp">
+                    {day.mintempC}°/{day.maxtempC}°
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
