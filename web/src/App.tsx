@@ -43,7 +43,7 @@ export const App: React.FC = () => {
       const data = await fetchNews({
         channel: channel || undefined,
         sort: "hot",
-        limit: isGold ? 100 : 30,
+        limit: isGold ? 500 : 30,
         date: date || undefined
       });
       setItems(data);

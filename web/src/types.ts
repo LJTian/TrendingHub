@@ -5,8 +5,9 @@ export interface NewsItem {
   source: string;
   description?: string;
   publishedAt: string;
-  publishedDate?: string; // 日期 YYYY-MM-DD，用于按日期展示
+  publishedDate?: string;
   hotScore: number;
+  extraData?: Record<string, unknown>;
 }
 
 export interface ApiResponse<T> {

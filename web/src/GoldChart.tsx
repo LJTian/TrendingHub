@@ -1,5 +1,8 @@
 import React from "react";
 import type { NewsItem } from "./types";
+import { DayChart } from "./DayChart";
+
+const GRAMS_PER_OUNCE = 31.1034768;
 
 interface Props {
   items: NewsItem[];
@@ -10,29 +13,19 @@ export const GoldChart: React.FC<Props> = ({ items }) => {
     return <div className="status">暂无黄金价格数据</div>;
   }
 
-  // 单位：接口为人民币/盎司
-  const unit = "元/盎司";
+  const toPerGram = (v: number) => (v > 10000 ? v / GRAMS_PER_OUNCE : v);
 
-  // 按时间从早到晚排序
   const sorted = [...items].sort(
-    (a, b) =>
-      new Date(a.publishedAt).getTime() - new Date(b.publishedAt).getTime()
+    (a, b) => new Date(a.publishedAt).getTime() - new Date(b.publishedAt).getTime()
   );
 
-  const prices = sorted.map((i) => i.hotScore);
-  const min = Math.min(...prices);
-  const max = Math.max(...prices);
-  const range = max - min || 1;
-
-  const points = sorted.map((item, idx) => {
-    const x =
-      sorted.length === 1 ? idx * 100 : (idx / (sorted.length - 1)) * 100; // 只有一个点时画水平线
-    const norm = (item.hotScore - min) / range;
-    const y = 90 - norm * 70; // 留上下边距
-    return `${x},${y}`;
-  });
+  const points = sorted.map((i) => ({
+    time: i.publishedAt,
+    value: toPerGram(i.hotScore),
+  }));
 
   const last = sorted[sorted.length - 1];
+  const lastPrice = toPerGram(last.hotScore);
 
   return (
     <div className="gold-wrapper">
@@ -40,36 +33,14 @@ export const GoldChart: React.FC<Props> = ({ items }) => {
         <div>
           <div className="gold-title">黄金价格（XAU/人民币）</div>
           <div className="gold-subtitle">
-            最新价：<span className="gold-price">{last.hotScore.toFixed(2)}</span> {unit}
+            最新价：<span className="gold-price">{lastPrice.toFixed(2)}</span> 元/克
           </div>
         </div>
         <div className="gold-time">
-          更新时间：
-          {new Date(last.publishedAt).toLocaleString("zh-CN", {
-            hour12: false
-          })}
+          {new Date(last.publishedAt).toLocaleString("zh-CN", { hour12: false })}
         </div>
       </div>
-
-      <div className="gold-chart-container">
-        <svg viewBox="0 0 100 100" className="gold-chart">
-          <defs>
-            <linearGradient id="gold-line" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%" stopColor="#f59e0b" />
-              <stop offset="100%" stopColor="#f97316" />
-            </linearGradient>
-          </defs>
-          <polyline
-            fill="none"
-            stroke="url(#gold-line)"
-            strokeWidth="1.5"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-            points={points.join(" ")}
-          />
-        </svg>
-      </div>
+      <DayChart points={points} color={["#f59e0b", "#ef7d1a"]} id="gold" />
     </div>
   );
 };
-
