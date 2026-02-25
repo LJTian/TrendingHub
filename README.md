@@ -111,4 +111,5 @@ curl "http://localhost:9000/api/v1/weather"
 - GitHub Trending 页面结构可能变化，解析逻辑属于"尽力而为"的实现
 - 非中文仓库描述会自动翻译为中文（优先 Google 翻译，失败时回退 MyMemory）
 - 天气数据来源于 QWeather 和风天气（需要申请免费开发者 Key，在运行环境中配置 `QWEATHER_API_KEY`、`QWEATHER_API_HOST`，例如使用 `.env` 文件或部署平台的环境变量功能），后端定时缓存确保响应速度
+- 若希望为整个站点添加访问密码，可在运行环境中配置 `APP_BASIC_USER` 和 `APP_BASIC_PASS`，启用 HTTP Basic Auth 保护（浏览器会在访问时弹出账号/密码框；`/health` 接口不受影响）
 - X 热搜因外部数据源不稳定暂未接入，采集器代码保留在 `internal/collector/x_trends.go`

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"log"
 	"net/http"
 	"path/filepath"
@@ -69,6 +70,11 @@ func main() {
 
 	// API
 	r := gin.Default()
+	// 若配置了全局访问密码，则启用 Basic Auth 保护（/health 仍然免认证）
+	if cfg.BasicAuthUser != "" && cfg.BasicAuthPass != "" {
+		r.Use(basicAuthMiddleware(cfg.BasicAuthUser, cfg.BasicAuthPass))
+	}
+
 	apiServer := api.NewServer(store, cfg)
 	apiServer.RegisterRoutes(r)
 
@@ -122,4 +128,29 @@ func refreshWeather(store *storage.Store, apiKey, apiHost string) {
 		log.Printf("weather: cached %s (%d bytes)", c.City, len(data))
 	}
 	log.Println("weather: refresh done")
+}
+
+// basicAuthMiddleware 为整个站点增加一个简单的 Basic Auth 访问密码。
+// 仅当配置了 APP_BASIC_USER / APP_BASIC_PASS 时启用。
+// /health 不做认证，便于健康检查。
+func basicAuthMiddleware(user, pass string) gin.HandlerFunc {
+	const realm = "Restricted"
+	uBytes := []byte(user)
+	pBytes := []byte(pass)
+
+	return func(c *gin.Context) {
+		if c.Request.URL.Path == "/health" {
+			c.Next()
+			return
+		}
+		u, p, ok := c.Request.BasicAuth()
+		if !ok ||
+			subtle.ConstantTimeCompare([]byte(u), uBytes) != 1 ||
+			subtle.ConstantTimeCompare([]byte(p), pBytes) != 1 {
+			c.Header("WWW-Authenticate", `Basic realm="`+realm+`"`)
+			c.AbortWithStatus(http.StatusUnauthorized)
+			return
+		}
+		c.Next()
+	}
 }
