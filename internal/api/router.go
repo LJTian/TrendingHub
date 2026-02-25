@@ -2,37 +2,37 @@ package api
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/LJTian/TrendingHub/internal/config"
 	"github.com/LJTian/TrendingHub/internal/storage"
 	"github.com/gin-gonic/gin"
 )
 
-// 专用 HTTP 客户端：强制 HTTP/1.1 + 15 秒超时，避免 wttr.in 的 HTTP/2 流错误
-var wttrClient = &http.Client{
+var httpClient = &http.Client{
 	Timeout: 15 * time.Second,
-	Transport: &http.Transport{
-		TLSNextProto:      make(map[string]func(string, *tls.Conn) http.RoundTripper),
-		DialContext:       (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
-		DisableKeepAlives: true,
-	},
 }
 
 type Server struct {
-	store *storage.Store
+	store          *storage.Store
+	qWeatherHost   string
+	qWeatherAPIKey string
 }
 
-func NewServer(store *storage.Store) *Server {
-	return &Server{store: store}
+func NewServer(store *storage.Store, cfg *config.Config) *Server {
+	return &Server{
+		store:          store,
+		qWeatherHost:   cfg.QWeatherAPIHost,
+		qWeatherAPIKey: cfg.QWeatherAPIKey,
+	}
 }
 
 func (s *Server) RegisterRoutes(r *gin.Engine) {
@@ -117,9 +117,13 @@ func (s *Server) addWeatherCity(c *gin.Context) {
 
 	// 立即获取天气并缓存，这样前端刷新就能看到
 	go func() {
+		if s.qWeatherHost == "" || s.qWeatherAPIKey == "" {
+			log.Printf("weather: QWeather config missing, skip fetch for %s", city)
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		data, err := FetchWeatherFromWttr(ctx, city)
+		data, err := FetchWeatherFromQWeather(ctx, city, s.qWeatherAPIKey, s.qWeatherHost)
 		if err != nil {
 			log.Printf("weather: fetch %s on add error: %v", city, err)
 			return
@@ -145,32 +149,257 @@ func (s *Server) removeWeatherCity(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": "ok", "message": "city removed"})
 }
 
-// FetchWeatherFromWttr 从 wttr.in 获取指定城市的天气 JSON，带重试
-func FetchWeatherFromWttr(ctx context.Context, city string) ([]byte, error) {
-	target := fmt.Sprintf("https://wttr.in/%s?format=j1&lang=zh", url.PathEscape(city))
+// ======== QWeather 适配：从和风天气获取实况+3日预报，并转换为 wttr.in 的结构 ========
+
+// QWeather 城市查询响应
+type qWeatherGeoResponse struct {
+	Code     string `json:"code"`
+	Location []struct {
+		ID      string `json:"id"`
+		Name    string `json:"name"`
+		Adm2    string `json:"adm2"`
+		Adm1    string `json:"adm1"`
+		Country string `json:"country"`
+		Lat     string `json:"lat"`
+		Lon     string `json:"lon"`
+	} `json:"location"`
+}
+
+// QWeather 实况天气响应
+type qWeatherNowResponse struct {
+	Code string `json:"code"`
+	Now  struct {
+		Temp      string `json:"temp"`
+		FeelsLike string `json:"feelsLike"`
+		Humidity  string `json:"humidity"`
+		Text      string `json:"text"`
+		Icon      string `json:"icon"`
+		WindSpeed string `json:"windSpeed"`
+		WindDir   string `json:"windDir"`
+		UVIndex   string `json:"uvIndex"`
+	} `json:"now"`
+}
+
+// QWeather 3 日预报响应
+type qWeatherDailyResponse struct {
+	Code  string `json:"code"`
+	Daily []struct {
+		FxDate   string `json:"fxDate"`
+		TempMax  string `json:"tempMax"`
+		TempMin  string `json:"tempMin"`
+		Sunrise  string `json:"sunrise"`
+		Sunset   string `json:"sunset"`
+		TextDay  string `json:"textDay"`
+		IconDay  string `json:"iconDay"`
+		WindDirD string `json:"windDirDay"`
+		WindDirN string `json:"windDirNight"`
+	} `json:"daily"`
+}
+
+type wttrCondition struct {
+	TempC          string `json:"temp_C"`
+	FeelsLikeC     string `json:"FeelsLikeC"`
+	Humidity       string `json:"humidity"`
+	WeatherDesc    []struct {
+		Value string `json:"value"`
+	} `json:"weatherDesc"`
+	WeatherCode    string `json:"weatherCode"`
+	WindspeedKmph  string `json:"windspeedKmph"`
+	Winddir16Point string `json:"winddir16Point"`
+	UVIndex        string `json:"uvIndex"`
+}
+
+type wttrDay struct {
+	Date     string `json:"date"`
+	MaxtempC string `json:"maxtempC"`
+	MintempC string `json:"mintempC"`
+	Astronomy []struct {
+		Sunrise string `json:"sunrise"`
+		Sunset  string `json:"sunset"`
+	} `json:"astronomy"`
+	Hourly []struct {
+		Time        string `json:"time"`
+		WeatherCode string `json:"weatherCode"`
+		WeatherDesc []struct {
+			Value string `json:"value"`
+		} `json:"weatherDesc"`
+	} `json:"hourly"`
+}
+
+type wttrResponse struct {
+	CurrentCondition []wttrCondition `json:"current_condition"`
+	NearestArea      []struct {
+		AreaName []struct {
+			Value string `json:"value"`
+		} `json:"areaName"`
+	} `json:"nearest_area"`
+	Weather []wttrDay `json:"weather"`
+}
+
+// FetchWeatherFromQWeather 调用和风天气 Geo + Now + 3d 接口，并组装为 wttr.in 兼容结构
+func FetchWeatherFromQWeather(ctx context.Context, city, apiKey, apiHost string) ([]byte, error) {
+	city = strings.TrimSpace(city)
+	if city == "" {
+		return nil, fmt.Errorf("empty city")
+	}
+	if apiKey == "" || apiHost == "" {
+		return nil, fmt.Errorf("qweather config missing")
+	}
+
+	base := strings.TrimRight(apiHost, "/")
+	if !strings.HasPrefix(base, "http://") && !strings.HasPrefix(base, "https://") {
+		base = "https://" + base
+	}
+
+	// 1. 城市地理编码：city 名称 -> location ID
+	geoURL := fmt.Sprintf("%s/geo/v2/city/lookup?location=%s&lang=zh", base, url.QueryEscape(city))
+	geoBody, err := qweatherGetWithRetry(ctx, geoURL, apiKey)
+	if err != nil {
+		return nil, err
+	}
+	var geo qWeatherGeoResponse
+	if err := json.Unmarshal(geoBody, &geo); err != nil {
+		return nil, err
+	}
+	if geo.Code != "200" || len(geo.Location) == 0 {
+		return nil, fmt.Errorf("qweather geoapi code=%s, locations=%d", geo.Code, len(geo.Location))
+	}
+	loc := geo.Location[0]
+
+	// 2. 实况
+	nowURL := fmt.Sprintf("%s/v7/weather/now?location=%s&lang=zh&unit=m", base, url.QueryEscape(loc.ID))
+	nowBody, err := qweatherGetWithRetry(ctx, nowURL, apiKey)
+	if err != nil {
+		return nil, err
+	}
+	var now qWeatherNowResponse
+	if err := json.Unmarshal(nowBody, &now); err != nil {
+		return nil, err
+	}
+	if now.Code != "200" {
+		return nil, fmt.Errorf("qweather now code=%s", now.Code)
+	}
+
+	// 3. 3 日预报
+	dailyURL := fmt.Sprintf("%s/v7/weather/3d?location=%s&lang=zh&unit=m", base, url.QueryEscape(loc.ID))
+	dailyBody, err := qweatherGetWithRetry(ctx, dailyURL, apiKey)
+	if err != nil {
+		return nil, err
+	}
+	var daily qWeatherDailyResponse
+	if err := json.Unmarshal(dailyBody, &daily); err != nil {
+		return nil, err
+	}
+	if daily.Code != "200" {
+		return nil, fmt.Errorf("qweather 3d code=%s", daily.Code)
+	}
+
+	// 3. 组装为 wttr.in 兼容结构，方便前端复用现有类型和 UI
+	resp := wttrResponse{}
+
+	// current_condition
+	resp.CurrentCondition = []wttrCondition{
+		{
+			TempC:      now.Now.Temp,
+			FeelsLikeC: now.Now.FeelsLike,
+			Humidity:   now.Now.Humidity,
+			WeatherDesc: []struct {
+				Value string `json:"value"`
+			}{
+				{Value: now.Now.Text},
+			},
+			WeatherCode:    now.Now.Icon,
+			WindspeedKmph:  now.Now.WindSpeed,
+			Winddir16Point: now.Now.WindDir,
+			UVIndex:        now.Now.UVIndex,
+		},
+	}
+
+	// nearest_area（仅用于展示城市名）
+	resp.NearestArea = []struct {
+		AreaName []struct {
+			Value string `json:"value"`
+		} `json:"areaName"`
+	}{
+		{
+				AreaName: []struct {
+					Value string `json:"value"`
+				}{
+					{Value: loc.Name},
+				},
+		},
+	}
+
+	// weather（三天预报）
+	for _, d := range daily.Daily {
+		day := wttrDay{
+			Date:     d.FxDate,
+			MaxtempC: d.TempMax,
+			MintempC: d.TempMin,
+		}
+		day.Astronomy = []struct {
+			Sunrise string `json:"sunrise"`
+			Sunset  string `json:"sunset"`
+		}{
+			{Sunrise: d.Sunrise, Sunset: d.Sunset},
+		}
+		day.Hourly = []struct {
+			Time        string `json:"time"`
+			WeatherCode string `json:"weatherCode"`
+			WeatherDesc []struct {
+				Value string `json:"value"`
+			} `json:"weatherDesc"`
+		}{
+			{
+				Time:        "1200",
+				WeatherCode: d.IconDay,
+				WeatherDesc: []struct {
+					Value string `json:"value"`
+				}{
+					{Value: d.TextDay},
+				},
+			},
+		}
+		resp.Weather = append(resp.Weather, day)
+	}
+
+	return json.Marshal(resp)
+}
+
+// httpGetWithRetry 带简单重试的 GET 请求封装，主要缓解瞬时网络问题。
+// qweatherGetWithRetry：带简单重试的 QWeather 请求封装，使用 X-QW-Api-Key 头进行鉴权
+func qweatherGetWithRetry(ctx context.Context, fullURL, apiKey string) ([]byte, error) {
 	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	for attempt := 0; attempt < 3; attempt++ {
+		if ctx.Err() != nil {
+			break
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
 		if err != nil {
 			return nil, err
 		}
-		req.Header.Set("User-Agent", "TrendingHub/1.0")
-		resp, err := wttrClient.Do(req)
+		if apiKey != "" {
+			req.Header.Set("X-QW-Api-Key", apiKey)
+		}
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			lastErr = err
-			continue
+		} else {
+			body, readErr := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				lastErr = fmt.Errorf("qweather status %d: %s", resp.StatusCode, string(body))
+			} else if readErr != nil {
+				lastErr = readErr
+			} else {
+				return body, nil
+			}
 		}
-		body, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			lastErr = fmt.Errorf("wttr.in returned %d", resp.StatusCode)
-			continue
+		// 简单指数退避，避免打爆服务；若上下文已取消则立即退出
+		if ctx.Err() != nil {
+			break
 		}
-		if readErr != nil {
-			lastErr = readErr
-			continue
-		}
-		return body, nil
+		time.Sleep(time.Duration(attempt+1) * time.Second)
 	}
 	return nil, lastErr
 }

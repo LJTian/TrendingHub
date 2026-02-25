@@ -11,7 +11,7 @@
 - **百度热搜**：实时获取百度热搜榜单
 - **Hacker News**：抓取 Hacker News 热门文章
 - **金融行情**：黄金价格（元/克）、上证指数、深证成指、创业板指
-- **天气预报**：基于 [wttr.in](https://wttr.in)，支持多城市标签页切换，当前天气 + 3 天预报
+- **天气预报**：基于 [QWeather 和风天气](https://dev.qweather.com/)，支持多城市标签页切换，当前天气 + 3 天预报
 - **日期筛选**：支持按日期查看历史数据
 - **定时采集**：各数据源按独立周期自动更新
 
@@ -110,5 +110,5 @@ curl "http://localhost:9000/api/v1/weather"
 
 - GitHub Trending 页面结构可能变化，解析逻辑属于"尽力而为"的实现
 - 非中文仓库描述会自动翻译为中文（优先 Google 翻译，失败时回退 MyMemory）
-- 天气数据来源于 wttr.in（免费、无需 API Key），后端定时缓存确保响应速度
+- 天气数据来源于 QWeather 和风天气（需要申请免费开发者 Key，在运行环境中配置 `QWEATHER_API_KEY`、`QWEATHER_API_HOST`，例如使用 `.env` 文件或部署平台的环境变量功能），后端定时缓存确保响应速度
 - X 热搜因外部数据源不稳定暂未接入，采集器代码保留在 `internal/collector/x_trends.go`

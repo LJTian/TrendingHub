@@ -44,7 +44,7 @@ func main() {
 	}
 
 	// 启动前同步预取天气，保证首次请求有缓存
-	refreshWeather(store)
+	refreshWeather(store, cfg.QWeatherAPIKey, cfg.QWeatherAPIHost)
 
 	// 按数据源更新频率配置独立的采集周期
 	jobs := []scheduler.FetcherJob{
@@ -63,13 +63,13 @@ func main() {
 	s.Start()
 
 	// 天气定时刷新：每小时从数据库读取城市列表并全量获取
-	if _, err := s.Cron().AddFunc("0 * * * *", func() { refreshWeather(store) }); err != nil {
+	if _, err := s.Cron().AddFunc("0 * * * *", func() { refreshWeather(store, cfg.QWeatherAPIKey, cfg.QWeatherAPIHost) }); err != nil {
 		log.Printf("warn: add weather cron failed: %v", err)
 	}
 
 	// API
 	r := gin.Default()
-	apiServer := api.NewServer(store)
+	apiServer := api.NewServer(store, cfg)
 	apiServer.RegisterRoutes(r)
 
 	// 若配置了前端目录，则托管 SPA 静态文件并做 fallback
@@ -93,7 +93,11 @@ func main() {
 	}
 }
 
-func refreshWeather(store *storage.Store) {
+func refreshWeather(store *storage.Store, apiKey, apiHost string) {
+	if apiKey == "" || apiHost == "" {
+		log.Printf("weather: skip refresh, QWeather not configured")
+		return
+	}
 	cities, err := store.ListWeatherCities()
 	if err != nil {
 		log.Printf("weather: list cities error: %v", err)
@@ -105,7 +109,7 @@ func refreshWeather(store *storage.Store) {
 	log.Printf("weather: refreshing %d cities...", len(cities))
 	for _, c := range cities {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		data, err := api.FetchWeatherFromWttr(ctx, c.City)
+		data, err := api.FetchWeatherFromQWeather(ctx, c.City, apiKey, apiHost)
 		cancel()
 		if err != nil {
 			log.Printf("weather: fetch %s error: %v", c.City, err)

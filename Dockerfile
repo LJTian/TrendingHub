@@ -11,6 +11,8 @@ FROM hub.iot-home.cn/library/golang:1.24-alpine AS backend
 WORKDIR /app
 RUN apk add --no-cache git ca-certificates
 COPY go.mod go.sum ./
+ENV GO111MODULE=on
+ENV GOPROXY=https://goproxy.cn,direct
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /trendinghub ./cmd/api

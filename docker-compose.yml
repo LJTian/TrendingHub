@@ -30,6 +30,8 @@ services:
       WEB_ROOT: "/app/web"
       POSTGRES_DSN: "host=postgres user=trendinghub password=trendinghub dbname=trendinghub port=5432 sslmode=disable TimeZone=UTC"
       REDIS_ADDR: "redis:6379"
+      QWEATHER_API_HOST: "${QWEATHER_API_HOST}"
+      QWEATHER_API_KEY: "${QWEATHER_API_KEY}"
     depends_on:
       - postgres
       - redis
