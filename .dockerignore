@@ -1,0 +1,26 @@
+# Git
+.git
+.gitignore
+
+# 前端
+web/node_modules
+web/dist
+
+# 文档与无关文件
+*.md
+README*
+image.png
+.DS_Store
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# 测试与临时
+*_test.go
+*.test
+tmp
+temp
+*.log

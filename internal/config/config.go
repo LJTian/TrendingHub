@@ -6,8 +6,8 @@ import (
 )
 
 type Config struct {
-	AppPort string
-
+	AppPort   string
+	WebRoot   string // 静态前端目录，非空时由 API 服务 SPA
 	PostgresDSN string
 	RedisAddr   string
 }
@@ -15,6 +15,7 @@ type Config struct {
 func Load() *Config {
 	cfg := &Config{
 		AppPort:     getEnv("APP_PORT", "9000"),
+		WebRoot:     getEnv("WEB_ROOT", ""),
 		PostgresDSN: getEnv("POSTGRES_DSN", "host=localhost user=trendinghub password=trendinghub dbname=trendinghub port=5432 sslmode=disable TimeZone=UTC"),
 		RedisAddr:   getEnv("REDIS_ADDR", "localhost:6380"),
 	}

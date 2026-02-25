@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/LJTian/TrendingHub/internal/api"
@@ -70,6 +72,20 @@ func main() {
 	apiServer := api.NewServer(store)
 	apiServer.RegisterRoutes(r)
 
+	// 若配置了前端目录，则托管 SPA 静态文件并做 fallback
+	if cfg.WebRoot != "" {
+		assetsDir := filepath.Join(cfg.WebRoot, "assets")
+		indexFile := filepath.Join(cfg.WebRoot, "index.html")
+		r.Static("/assets", assetsDir)
+		r.NoRoute(func(c *gin.Context) {
+			if c.Request.Method != http.MethodGet {
+				c.Status(http.StatusNotFound)
+				return
+			}
+			// SPA：未匹配 API 的 GET 均返回 index.html
+			c.File(indexFile)
+		})
+	}
 	addr := ":" + cfg.AppPort
 	log.Printf("starting api server at %s ...", addr)
 	if err := r.Run(addr); err != nil {
