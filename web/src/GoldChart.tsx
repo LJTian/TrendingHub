@@ -24,8 +24,13 @@ export const GoldChart: React.FC<Props> = ({ items }) => {
     value: toPerGram(i.hotScore),
   }));
 
+  const first = sorted[0];
   const last = sorted[sorted.length - 1];
+  const firstPrice = toPerGram(first.hotScore);
   const lastPrice = toPerGram(last.hotScore);
+  const goldChangePct = firstPrice > 0 ? ((lastPrice - firstPrice) / firstPrice) * 100 : 0;
+  const goldChangeDisplay = goldChangePct.toFixed(2);
+  const goldUp = goldChangePct >= 0;
 
   return (
     <div className="gold-wrapper">
@@ -34,6 +39,13 @@ export const GoldChart: React.FC<Props> = ({ items }) => {
           <div className="gold-title">黄金价格（XAU/人民币）</div>
           <div className="gold-subtitle">
             最新价：<span className="gold-price">{lastPrice.toFixed(2)}</span> 元/克
+            <span
+              className={`home-finance-change ${goldUp ? "up" : "down"}`}
+              style={{ marginLeft: 8 }}
+            >
+              {goldUp && goldChangeDisplay !== "0.00" && "+"}
+              {goldChangeDisplay}%
+            </span>
           </div>
         </div>
         <div className="gold-time">

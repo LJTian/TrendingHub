@@ -94,3 +94,31 @@ export async function removeWeatherCity(city: string): Promise<void> {
   });
 }
 
+/** 获取 A 股自选股代码列表 */
+export async function fetchAshareStocks(): Promise<string[]> {
+  const res = await fetch(`${BASE_URL}/api/v1/ashare/stocks`);
+  if (!res.ok) return [];
+  const json = (await res.json()) as ApiResponse<string[]>;
+  return json.data ?? [];
+}
+
+/** 添加 A 股自选股（6 位代码） */
+export async function addAshareStock(code: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/v1/ashare/stocks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code })
+  });
+  if (!res.ok) {
+    const j = await res.json().catch(() => ({})) as { message?: string };
+    throw new Error(j.message ?? "添加失败");
+  }
+}
+
+/** 移除 A 股自选股 */
+export async function removeAshareStock(code: string): Promise<void> {
+  await fetch(`${BASE_URL}/api/v1/ashare/stocks/${encodeURIComponent(code)}`, {
+    method: "DELETE"
+  });
+}
+

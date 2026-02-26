@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/LJTian/TrendingHub/internal/api"
@@ -44,14 +45,15 @@ func main() {
 		log.Printf("warn: ensure default weather city: %v", err)
 	}
 
-	// 启动前同步预取天气，保证首次请求有缓存
-	refreshWeather(store, cfg.QWeatherAPIKey, cfg.QWeatherAPIHost)
+	// 启动时在后台预取天气，不阻塞主流程；首次请求若未命中缓存可稍后刷新
+	go refreshWeather(store, cfg.QWeatherAPIKey, cfg.QWeatherAPIHost)
 
-	// 按数据源更新频率配置独立的采集周期
+	// 按数据源更新频率配置独立的采集周期；A 股自选股从数据库读取
 	jobs := []scheduler.FetcherJob{
 		{Fetcher: &collector.BaiduHotFetcher{}, CronSpec: "*/30 * * * *"},
 		{Fetcher: &collector.GoldPriceFetcher{}, CronSpec: "*/30 * * * *"},
-		{Fetcher: &collector.AShareIndexFetcher{}, CronSpec: "*/30 * * * *"},
+		// A 股指数 + 自选股：提高频率到每 3 分钟一次，以获得更平滑的分时折线
+		{Fetcher: &collector.AShareIndexFetcher{GetStockCodes: func() []string { return store.ListAShareStockCodes() }}, CronSpec: "*/3 * * * *"},
 		{Fetcher: &collector.HackerNewsFetcher{}, CronSpec: "0 * * * *"},
 		{Fetcher: &collector.GitHubTrendingMock{}, CronSpec: "0 */2 * * *"},
 	}
@@ -113,20 +115,27 @@ func refreshWeather(store *storage.Store, apiKey, apiHost string) {
 		return
 	}
 	log.Printf("weather: refreshing %d cities...", len(cities))
+	var wg sync.WaitGroup
 	for _, c := range cities {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		data, err := api.FetchWeatherFromQWeather(ctx, c.City, apiKey, apiHost)
-		cancel()
-		if err != nil {
-			log.Printf("weather: fetch %s error: %v", c.City, err)
-			continue
-		}
-		if err := store.SaveWeatherCache(c.City, string(data)); err != nil {
-			log.Printf("weather: cache %s error: %v", c.City, err)
-			continue
-		}
-		log.Printf("weather: cached %s (%d bytes)", c.City, len(data))
+		city := c.City
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			data, err := api.FetchWeatherFromQWeather(ctx, city, apiKey, apiHost)
+			if err != nil {
+				log.Printf("weather: fetch %s error: %v", city, err)
+				return
+			}
+			if err := store.SaveWeatherCache(city, string(data)); err != nil {
+				log.Printf("weather: cache %s error: %v", city, err)
+				return
+			}
+			log.Printf("weather: cached %s (%d bytes)", city, len(data))
+		}()
 	}
+	wg.Wait()
 	log.Println("weather: refresh done")
 }
 

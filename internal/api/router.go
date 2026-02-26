@@ -47,6 +47,10 @@ func (s *Server) RegisterRoutes(r *gin.Engine) {
 		v1.GET("/weather/cities", s.listWeatherCities)
 		v1.POST("/weather/cities", s.addWeatherCity)
 		v1.DELETE("/weather/cities/:city", s.removeWeatherCity)
+
+		v1.GET("/ashare/stocks", s.listAshareStocks)
+		v1.POST("/ashare/stocks", s.addAshareStock)
+		v1.DELETE("/ashare/stocks/:code", s.removeAshareStock)
 	}
 }
 
@@ -147,6 +151,50 @@ func (s *Server) removeWeatherCity(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"code": "ok", "message": "city removed"})
+}
+
+// ========== A 股自选股（Web 添加，存数据库） ==========
+
+func (s *Server) listAshareStocks(c *gin.Context) {
+	codes := s.store.ListAShareStockCodes()
+	c.JSON(http.StatusOK, gin.H{"code": "ok", "data": codes})
+}
+
+func (s *Server) addAshareStock(c *gin.Context) {
+	var body struct {
+		Code string `json:"code"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || body.Code == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": "bad_request", "message": "missing code"})
+		return
+	}
+	normalized := storage.NormalizeStockCode(body.Code)
+	if normalized == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": "bad_request", "message": "invalid code, need 6-digit stock code"})
+		return
+	}
+	if err := s.store.AddAShareStockCode(normalized); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "internal_error", "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"code": "ok", "data": normalized, "message": "stock added"})
+}
+
+func (s *Server) removeAshareStock(c *gin.Context) {
+	code := c.Param("code")
+	if code == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": "bad_request", "message": "missing code"})
+		return
+	}
+	normalized := storage.NormalizeStockCode(code)
+	if normalized == "" {
+		normalized = strings.TrimSpace(code)
+	}
+	if err := s.store.RemoveAShareStockCode(normalized); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "internal_error", "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"code": "ok", "message": "stock removed"})
 }
 
 // ======== QWeather 适配：从和风天气获取实况+3日预报，并转换为 wttr.in 的结构 ========

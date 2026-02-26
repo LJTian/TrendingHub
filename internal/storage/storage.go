@@ -7,6 +7,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/LJTian/TrendingHub/internal/processor"
@@ -77,21 +78,52 @@ type Store struct {
 	Redis *redis.Client
 }
 
+const (
+	dbConnectRetries = 10
+	dbConnectDelay   = 2 * time.Second
+)
+
 func NewStore(dsn, redisAddr string) (*Store, error) {
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	var db *gorm.DB
+	var err error
+	for i := 0; i < dbConnectRetries; i++ {
+		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+		if err == nil {
+			break
+		}
+		if i < dbConnectRetries-1 {
+			log.Printf("database not ready (attempt %d/%d): %v; retry in %v", i+1, dbConnectRetries, err, dbConnectDelay)
+			time.Sleep(dbConnectDelay)
+		}
+	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to connect after %d attempts: %w", dbConnectRetries, err)
 	}
 
-	if err := db.AutoMigrate(&Channel{}, &News{}, &WeatherCity{}, &WeatherCache{}); err != nil {
+	if err := db.AutoMigrate(&Channel{}, &News{}, &WeatherCity{}, &WeatherCache{}, &AShareStock{}); err != nil {
 		return nil, err
 	}
-	// 按频道分表：与 news 同结构，便于按 source 路由
+	// 按频道分表：与 news 同结构，便于按 source 路由；并行建表
+	var createErr error
+	var createErrMu sync.Mutex
+	var wg sync.WaitGroup
 	for _, src := range allowedSources {
 		tbl := sourceToTable[src]
-		if err := db.Exec(fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (LIKE news INCLUDING ALL)", tbl)).Error; err != nil {
-			return nil, fmt.Errorf("create table %s: %w", tbl, err)
-		}
+		wg.Add(1)
+		go func(tbl string) {
+			defer wg.Done()
+			if err := db.Exec(fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (LIKE news INCLUDING ALL)", tbl)).Error; err != nil {
+				createErrMu.Lock()
+				if createErr == nil {
+					createErr = fmt.Errorf("create table %s: %w", tbl, err)
+				}
+				createErrMu.Unlock()
+			}
+		}(tbl)
+	}
+	wg.Wait()
+	if createErr != nil {
+		return nil, createErr
 	}
 
 	rdb := redis.NewClient(&redis.Options{
@@ -185,6 +217,7 @@ func (s *Store) SaveBatch(items []processor.ProcessedNews) error {
 			"hot_score":      it.HotScore,
 			"published_at":   it.PublishedAt,
 			"published_date": pubDate,
+			"extra_data":     datatypes.JSONMap(it.RawData),
 		}).Error; err != nil {
 			return fmt.Errorf("update %s %s: %w", tbl, it.URL, err)
 		}
@@ -241,8 +274,12 @@ func (s *Store) ListNews(channel, sort string, limit int, date string) ([]News, 
 		aq := s.DB.Table("news_ashare")
 		if dateCond {
 			aq = aq.Where(dateWhere, date, date)
+		} else {
+			// 金融首页 / 自选股等不指定日期时：只取当天的 A 股数据，
+			// 避免把前几天或盘后采集的数据混入，导致分时图在时间轴上“偏移”。
+			aq = aq.Where("published_at >= ?", startOfDay)
 		}
-		aq.Order("published_at DESC").Limit(100).Find(&ashareList)
+		aq.Order("published_at ASC").Limit(500).Find(&ashareList)
 		list := append(goldList, ashareList...)
 		if len(list) > limit {
 			list = list[:limit]
@@ -354,18 +391,28 @@ func (s *Store) ListPublishedDates(channel string, limit int) ([]string, error) 
 		}
 		return []string{}, nil
 	}
+	var dateSetMu sync.Mutex
 	dateSet := make(map[string]struct{})
+	var wg sync.WaitGroup
 	for _, tbl := range tables {
-		var rows []struct{ D string }
-		if err := s.DB.Raw(baseSQL+tbl+` ORDER BY d DESC LIMIT ?`, limit).Scan(&rows).Error; err != nil {
-			continue
-		}
-		for _, r := range rows {
-			if r.D != "" {
-				dateSet[r.D] = struct{}{}
+		tbl := tbl
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var rows []struct{ D string }
+			if err := s.DB.Raw(baseSQL+tbl+` ORDER BY d DESC LIMIT ?`, limit).Scan(&rows).Error; err != nil {
+				return
 			}
-		}
+			dateSetMu.Lock()
+			for _, r := range rows {
+				if r.D != "" {
+					dateSet[r.D] = struct{}{}
+				}
+			}
+			dateSetMu.Unlock()
+		}()
 	}
+	wg.Wait()
 	dates := make([]string, 0, len(dateSet))
 	for d := range dateSet {
 		dates = append(dates, d)

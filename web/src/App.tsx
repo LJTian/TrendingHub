@@ -3,6 +3,7 @@ import { fetchNews, fetchNewsDates } from "./api";
 import type { NewsItem } from "./types";
 import { GoldChart } from "./GoldChart";
 import { AshareBlock } from "./AshareBlock";
+import { AshareStocksManager } from "./AshareStocksManager";
 import { Calendar } from "./Calendar";
 import { WeatherCard } from "./WeatherCard";
 
@@ -128,35 +129,50 @@ export const App: React.FC = () => {
 
     const toPerGram = (v: number) => (v > 10000 ? v / GRAMS_PER_OUNCE : v);
 
+    const goldSorted = [...goldItems].sort(
+      (a, b) => new Date(a.publishedAt).getTime() - new Date(b.publishedAt).getTime()
+    );
+    const goldFirst = goldSorted[0];
+    const goldLast = goldSorted[goldSorted.length - 1];
+    const goldFirstPrice = goldFirst ? toPerGram(goldFirst.hotScore) : 0;
+    const goldLastPrice = latestGold ? toPerGram(latestGold.hotScore) : 0;
+    const goldChangePct =
+      goldFirstPrice > 0 ? ((goldLastPrice - goldFirstPrice) / goldFirstPrice) * 100 : 0;
+    const goldChangeDisplay = goldChangePct.toFixed(2);
+    const goldUp = goldChangePct >= 0;
+
     return (
       <div className="home-finance">
         {latestGold && (
           <div className="home-finance-row">
             <span className="home-finance-label">黄金（元/克）</span>
             <span className="home-finance-value gold">
-              ¥{toPerGram(latestGold.hotScore).toFixed(2)}
+              ¥{goldLastPrice.toFixed(2)}
+            </span>
+            <span className={`home-finance-change ${goldUp ? "up" : "down"}`}>
+              {goldUp && goldChangeDisplay !== "0.00" && "+"}
+              {goldChangeDisplay}%
             </span>
           </div>
         )}
         {Array.from(ashareLatest.values())
           .slice(0, 4)
           .map((item) => {
-            const change = item.extraData?.change as string | undefined;
-            const isUp = change ? !change.startsWith("-") : true;
+            const change = (item.extraData?.change as string | undefined) ?? "";
+            const changeDisplay = change !== "" ? change : "0.00";
+            const isUp = change === "" || !change.startsWith("-");
             return (
               <div key={item.id} className="home-finance-row">
                 <span className="home-finance-label">{item.title}</span>
                 <span className={`home-finance-value ${isUp ? "up" : "down"}`}>
                   {item.hotScore.toFixed(2)}
                 </span>
-                {change && (
-                  <span
-                    className={`home-finance-change ${isUp ? "up" : "down"}`}
-                  >
-                    {isUp && "+"}
-                    {change}%
-                  </span>
-                )}
+                <span
+                  className={`home-finance-change ${isUp ? "up" : "down"}`}
+                >
+                  {isUp && changeDisplay !== "0.00" && "+"}
+                  {changeDisplay}%
+                </span>
               </div>
             );
           })}
@@ -273,12 +289,26 @@ export const App: React.FC = () => {
           ) : channel === "gold" ? (
             <>
               <section className="section">
+                <h2 className="section-title">A 股指数</h2>
+                <AshareBlock
+                  items={items.filter(
+                    (i) =>
+                      i.source === "ashare" &&
+                      ["上证指数", "深证成指", "创业板指"].includes(i.title)
+                  )}
+                />
+              </section>
+              <section className="section">
                 <h2 className="section-title">黄金 · 当日走势</h2>
                 <GoldChart items={items.filter((i) => i.source === "gold")} />
               </section>
               <section className="section">
-                <AshareBlock
-                  items={items.filter((i) => i.source === "ashare")}
+                <AshareStocksManager
+                  watchlistItems={items.filter(
+                    (i) =>
+                      i.source === "ashare" &&
+                      !["上证指数", "深证成指", "创业板指"].includes(i.title)
+                  )}
                 />
               </section>
             </>

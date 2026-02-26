@@ -894,6 +894,202 @@ body {
   color: var(--cursor-text-muted);
 }
 
+/* ========== 自选股管理（金融频道） ========== */
+.ashare-stocks-manager {
+  padding: 16px 20px 20px;
+  background: var(--cursor-bg);
+  border: 1px solid var(--cursor-border);
+  border-radius: var(--cursor-radius);
+}
+
+.ashare-stocks-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.ashare-stocks-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--cursor-text);
+  margin: 0;
+}
+
+.ashare-stocks-hint {
+  font-size: 12px;
+  color: var(--cursor-text-muted);
+  margin: 0 0 12px 0;
+}
+
+.ashare-stocks-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.ashare-stocks-head .ashare-stocks-form {
+  margin: 0;
+}
+
+.ashare-stocks-input {
+  width: 120px;
+  padding: 8px 10px;
+  font-size: 14px;
+  border: 1px solid var(--cursor-border);
+  border-radius: var(--cursor-radius);
+  background: var(--cursor-bg);
+  color: var(--cursor-text);
+}
+
+.ashare-stocks-input::placeholder {
+  color: var(--cursor-text-muted);
+}
+
+.ashare-stocks-btn {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--cursor-bg);
+  background: var(--cursor-accent);
+  border: none;
+  border-radius: var(--cursor-radius);
+  cursor: pointer;
+}
+
+.ashare-stocks-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.ashare-stocks-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ashare-stocks-error {
+  font-size: 12px;
+  color: var(--cursor-error, #dc2626);
+  margin-top: 8px;
+}
+
+.ashare-stocks-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  margin: 12px 0 0 0;
+  padding: 0;
+}
+
+.ashare-stocks-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  background: var(--cursor-surface);
+  border: 1px solid var(--cursor-border);
+  border-radius: 8px;
+  min-width: 280px;
+  position: relative;
+}
+
+.ashare-stocks-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ashare-stocks-item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ashare-stocks-item-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ashare-stocks-code {
+  font-weight: 600;
+  color: var(--cursor-text-muted);
+  font-size: 12px;
+}
+
+.ashare-stocks-name {
+  color: var(--cursor-text);
+  text-decoration: none;
+  font-weight: 500;
+  flex: 1;
+}
+
+.ashare-stocks-name:hover {
+  color: var(--cursor-accent);
+}
+
+.ashare-stocks-price-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ashare-stocks-price {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.ashare-stocks-price.up { color: #ef4444; }
+.ashare-stocks-price.down { color: #22c55e; }
+
+.ashare-stocks-change {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.ashare-stocks-change.up { color: #ef4444; }
+.ashare-stocks-change.down { color: #22c55e; }
+
+.ashare-stocks-pending {
+  font-size: 12px;
+  color: var(--cursor-text-muted);
+  font-style: italic;
+}
+
+.ashare-stocks-chart {
+  width: 100%;
+  height: 60px;
+  margin-top: 4px;
+}
+
+.ashare-stocks-remove {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 0 6px;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--cursor-text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.ashare-stocks-remove:hover:not(:disabled) {
+  color: var(--cursor-text);
+  background: var(--cursor-bg);
+}
+
+.ashare-stocks-remove:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 /* ========== 金融专区 ========== */
 .gold-wrapper {
   padding: 20px 24px 24px;
@@ -936,6 +1132,13 @@ body {
   border: 1px solid var(--cursor-border);
   border-radius: var(--cursor-radius);
   padding: 16px 12px 6px 0;
+}
+
+.gc.gc-mini {
+  margin-top: 0;
+  border: none;
+  padding: 0;
+  background: transparent;
 }
 
 .gc-yaxis {
@@ -992,13 +1195,17 @@ body {
 }
 
 .ashare-charts {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
   gap: 20px;
 }
-
+@media (max-width: 720px) {
+  .ashare-charts {
+    grid-template-columns: 1fr;
+  }
+}
 .ashare-chart-item {
-  /* each index chart block */
+  min-width: 0;
 }
 
 .ashare-chart-header {

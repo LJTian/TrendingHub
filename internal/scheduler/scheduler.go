@@ -71,6 +71,11 @@ func (s *Scheduler) RunOnce() {
 }
 
 func (s *Scheduler) runFetcher(f collector.Fetcher) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("fetch %s panic recovered: %v", f.Name(), r)
+		}
+	}()
 	name := f.Name()
 	log.Printf("fetch from %s...", name)
 
