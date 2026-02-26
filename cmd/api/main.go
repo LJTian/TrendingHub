@@ -52,8 +52,20 @@ func main() {
 	jobs := []scheduler.FetcherJob{
 		{Fetcher: &collector.BaiduHotFetcher{}, CronSpec: "*/30 * * * *"},
 		{Fetcher: &collector.GoldPriceFetcher{}, CronSpec: "*/30 * * * *"},
-		// A 股指数 + 自选股：提高频率到每 3 分钟一次，以获得更平滑的分时折线
-		{Fetcher: &collector.AShareIndexFetcher{GetStockCodes: func() []string { return store.ListAShareStockCodes() }}, CronSpec: "*/3 * * * *"},
+		// A 股指数 + 自选股：提高频率到每 3 分钟一次，以获得更平滑的分时折线；
+		// 收盘后仅在“当天尚无任何 A 股数据”时允许再拉一次，用当前价回填当天快照。
+		{
+			Fetcher: &collector.AShareIndexFetcher{
+				GetStockCodes: func() []string { return store.ListAShareStockCodes() },
+				HasTodayData: func(now time.Time) bool {
+					// 使用东八区日期与存储层保持一致
+					loc := time.FixedZone("CST", 8*60*60)
+					date := now.In(loc).Format("2006-01-02")
+					return store.HasAshareDataForDate(date)
+				},
+			},
+			CronSpec: "*/3 * * * *",
+		},
 		{Fetcher: &collector.HackerNewsFetcher{}, CronSpec: "0 * * * *"},
 		{Fetcher: &collector.GitHubTrendingMock{}, CronSpec: "0 */2 * * *"},
 	}

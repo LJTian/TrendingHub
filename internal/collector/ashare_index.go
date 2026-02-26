@@ -17,6 +17,11 @@ import (
 type AShareIndexFetcher struct {
 	// GetStockCodes 返回自选股代码列表，由调用方注入（如从 Store.ListAShareStockCodes）
 	GetStockCodes func() []string
+	// HasTodayData 判断某个时间对应的东八区“交易日”在 DB 中是否已经有 A 股数据；
+	// 若注入该函数，则在收盘后会根据其返回值决定是否需要额外拉一次“当天快照”：
+	// - 市场已收盘 && HasTodayData(now) == true  -> 直接跳过，不再访问行情源
+	// - 市场已收盘 && HasTodayData(now) == false -> 仍然允许执行一次 Fetch，用当前价回填当天数据
+	HasTodayData func(time.Time) bool
 }
 
 func (a *AShareIndexFetcher) Name() string {
@@ -35,7 +40,67 @@ var indexSecIDs = []struct {
 	{"0.399006", "创业板指"},
 }
 
+// isAshareMarketOpen 判断当前是否处于 A 股交易时间（北京时间），
+// 用于在休市时快速跳过采集，避免对行情源造成无效访问。
+func isAshareMarketOpen(t time.Time) bool {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		// 回退到固定 UTC+8，确保即使系统时区配置异常也能大致正确
+		loc = time.FixedZone("CST", 8*60*60)
+	}
+	bt := t.In(loc)
+
+	// 周六日休市
+	if bt.Weekday() == time.Saturday || bt.Weekday() == time.Sunday {
+		return false
+	}
+
+	min := bt.Hour()*60 + bt.Minute()
+	// 交易时间：9:30–11:30, 13:00–15:00（中午休市不采集）
+	if min >= 9*60+30 && min <= 11*60+30 {
+		return true
+	}
+	if min >= 13*60 && min <= 15*60 {
+		return true
+	}
+	return false
+}
+
+// isAshareTradingWeekday 判断是否为 A 股正常交易日（仅按工作日粗略判断，不处理法定节假日）
+func isAshareTradingWeekday(t time.Time) bool {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		loc = time.FixedZone("CST", 8*60*60)
+	}
+	bt := t.In(loc)
+	switch bt.Weekday() {
+	case time.Saturday, time.Sunday:
+		return false
+	default:
+		return true
+	}
+}
+
 func (a *AShareIndexFetcher) Fetch() ([]NewsItem, error) {
+	now := time.Now()
+	if !isAshareMarketOpen(now) {
+		// 收盘后 / 盘前：若注入了 HasTodayData，则仅在“今天尚无任何 A 股数据”时允许再拉一次，
+		// 用当前价作为当天快照；否则直接跳过，避免在休市期间持续访问行情源。
+		if a.HasTodayData == nil {
+			log.Println("skip A-share fetch: market closed")
+			return nil, nil
+		}
+		if !isAshareTradingWeekday(now) {
+			log.Println("skip A-share fetch: non-trading weekday (weekend)")
+			return nil, nil
+		}
+		if a.HasTodayData(now) {
+			log.Println("skip A-share fetch: market closed and DB already has data for today")
+			return nil, nil
+		}
+		log.Println("A-share market closed but DB has no data for today, fetch once to backfill snapshot...")
+	}
+
 	log.Println("fetch A-share (East Money)...")
 
 	// 1. 三大指数置顶

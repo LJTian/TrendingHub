@@ -139,6 +139,23 @@ func NewStore(dsn, redisAddr string) (*Store, error) {
 	return &Store{DB: db, Redis: rdb}, nil
 }
 
+// HasAshareDataForDate 判断指定日期（YYYY-MM-DD，东八区）是否已有任何 A 股数据，
+// 用于在采集层决定是否需要在收盘后额外补拉一次“当天快照”。
+func (s *Store) HasAshareDataForDate(date string) bool {
+	if date == "" {
+		now := time.Now().In(locEast8)
+		date = now.Format("2006-01-02")
+	}
+	const dateWhere = "(published_date = ? OR (TRIM(COALESCE(published_date, '')) = '' AND to_char(published_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD') = ?))"
+
+	var cnt int64
+	if err := s.DB.Table("news_ashare").Where(dateWhere, date, date).Count(&cnt).Error; err != nil {
+		log.Printf("HasAshareDataForDate(%s) error: %v", date, err)
+		return false
+	}
+	return cnt > 0
+}
+
 // EnsureChannel 确保某个渠道存在，使用 FirstOrCreate 避免并发竞态
 func (s *Store) EnsureChannel(code, name, baseURL string) (*Channel, error) {
 	ch := &Channel{
