@@ -29,7 +29,7 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: ${{ runner.os }}-go-${{ hashFiles("go.sum") }}
+          key: ${{ runner.os }}-go-${{ hashFiles('go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
 
@@ -44,7 +44,7 @@ jobs:
           path: |
             web/node_modules
             ~/.npm
-          key: ${{ runner.os }}-node-${{ hashFiles("web/package-lock.json") }}
+          key: ${{ runner.os }}-node-${{ hashFiles('web/package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-node-
       - name: Run make test (Go tests + web build)
