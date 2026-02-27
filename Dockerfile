@@ -1,6 +1,6 @@
 # Stage 1: 构建前端
 ARG BASE_REGISTRY=docker.io
-FROM ${BASE_REGISTRY}/library/node:20-alpine AS frontend
+FROM --platform=$BUILDPLATFORM ${BASE_REGISTRY}/library/node:20-alpine AS frontend
 WORKDIR /app/web
 COPY web/package.json web/package-lock.json* ./
 RUN npm ci
