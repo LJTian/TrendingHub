@@ -32,6 +32,8 @@ services:
       REDIS_ADDR: "redis:6379"
       QWEATHER_API_HOST: "${QWEATHER_API_HOST}"
       QWEATHER_API_KEY: "${QWEATHER_API_KEY}"
+      APP_BASIC_USER: "${APP_BASIC_USER}"
+      APP_BASIC_PASS: "${APP_BASIC_PASS}"
     depends_on:
       - postgres
       - redis

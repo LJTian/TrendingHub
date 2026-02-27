@@ -114,3 +114,21 @@ curl "http://localhost:9000/api/v1/weather"
 - 若希望为整个站点添加访问密码，可在运行环境中配置 `APP_BASIC_USER` 和 `APP_BASIC_PASS`，启用 HTTP Basic Auth 保护（浏览器会在访问时弹出账号/密码框；`/health` 接口不受影响）
 - A 股自选股：设置环境变量 `ASHARE_STOCK_CODES`（逗号分隔，如 `600519,000858,300750`），金融频道会在三大指数下方展示这些股票的行情；不设置则仅展示黄金 + 三大指数
 - X 热搜因外部数据源不稳定暂未接入，采集器代码保留在 `internal/collector/x_trends.go`
+
+### 全站访问密码
+
+若需要在生产环境为整站加上一层轻量的 HTTP Basic Auth，设置 `APP_BASIC_USER` 与 `APP_BASIC_PASS` 即可。配置完成后，Go 服务会拦截除 `/health` 以外的所有请求并触发浏览器的账号/密码弹窗；只要在环境中传入（例如 `docker compose` 文件会读取根目录 `.env` 中的变量），同一个域名下的 API 与静态页面都自动使用该凭据，不需要额外在前端里处理。
+
+**启用示例**：
+
+```bash
+# .env（与 docker-compose.yml 放在同一目录）
+APP_BASIC_USER=admin
+APP_BASIC_PASS=secret
+
+# 然后重新启动容器
+docker compose down
+docker compose up -d
+```
+
+如需在其它部署方式下启用，只需将上述两个环境变量注入运行 `trendinghub` 可执行文件即可。
