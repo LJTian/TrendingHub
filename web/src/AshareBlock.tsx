@@ -73,6 +73,7 @@ export const AshareBlock: React.FC<Props> = ({ items }) => {
           
           const last = filtered[filtered.length - 1] || sorted[sorted.length - 1];
           const change = (last.extraData?.change as string | undefined) ?? "";
+          const preClose = last.extraData?.preClose as number | undefined;
           const isUp = change === "" || !change.startsWith("-");
           const changeDisplay = change !== "" ? change : "0.00";
           const color = INDEX_COLORS[title] ?? DEFAULT_COLOR;
@@ -103,6 +104,8 @@ export const AshareBlock: React.FC<Props> = ({ items }) => {
                 timeAxis={ASHARE_TIME_AXIS_MAIN}
                 showYAxis={false}
                 showXAxis
+                showBaseline={true}
+                baselineValue={preClose}
                 smoothWindow={smoothWindow}
               />
             </div>

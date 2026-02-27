@@ -14,6 +14,9 @@ const CHANNELS = [
   { code: "gold", label: "金融", sources: ["gold", "ashare"] }
 ];
 
+const CHANNEL_CODES = CHANNELS.map((ch) => ch.code);
+const SEARCH_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
 const HOME_PREVIEW_COUNT = 5;
 const GRAMS_PER_OUNCE = 31.1034768;
 
@@ -22,6 +25,26 @@ function todayEast8(): string {
   return new Date().toLocaleDateString("sv-SE", {
     timeZone: "Asia/Shanghai"
   });
+}
+
+function getInitialSearchState(defaultDate: string) {
+  if (typeof window === "undefined") {
+    return { channel: "", date: defaultDate };
+  }
+  const params = new URLSearchParams(window.location.search);
+  const channelParam = params.get("channel");
+  const dateParam = params.get("date");
+  const channel = channelParam && CHANNEL_CODES.includes(channelParam) ? channelParam : "";
+  if (dateParam === null) {
+    return { channel, date: defaultDate };
+  }
+  if (dateParam === "") {
+    return { channel, date: "" };
+  }
+  return {
+    channel,
+    date: SEARCH_DATE_REGEX.test(dateParam) ? dateParam : defaultDate
+  };
 }
 
 /** 将文本按字符数截断（按 Unicode 字符计算，避免中文被截断成半个字） */
@@ -33,12 +56,34 @@ function truncateText(text: string | undefined, limit: number): string {
 }
 
 export const App: React.FC = () => {
-  const [channel, setChannel] = useState<string>("");
-  const [date, setDate] = useState<string>(() => todayEast8());
+  const today = useMemo(() => todayEast8(), []);
+  const initialSearch = useMemo(() => getInitialSearchState(today), [today]);
+  const [channel, setChannel] = useState<string>(initialSearch.channel);
+  const [date, setDate] = useState<string>(initialSearch.date);
   const [dates, setDates] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [items, setItems] = useState<NewsItem[]>([]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams();
+    if (channel) {
+      params.set("channel", channel);
+    }
+    if (date === "") {
+      params.set("date", "");
+    } else if (date && date !== today) {
+      params.set("date", date);
+    }
+
+    const search = params.toString();
+    const currentUrl = `${window.location.pathname}${window.location.search}`;
+    const nextUrl = search ? `${window.location.pathname}?${search}` : window.location.pathname;
+    if (currentUrl !== nextUrl) {
+      window.history.replaceState(null, "", nextUrl);
+    }
+  }, [channel, date, today]);
 
   const isHome = channel === "";
 

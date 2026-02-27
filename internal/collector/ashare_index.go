@@ -169,8 +169,8 @@ func (a *AShareIndexFetcher) fetchOneStock(code string) *NewsItem {
 		return nil
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
-	// f43: 最新价（分），f170: 涨跌幅（百分比 * 100），f58: 名称
-	params := url.Values{"secid": {secID}, "fields": {"f43,f58,f170"}}
+	// f43: 最新价（分），f58: 名称，f60: 昨收（分），f170: 涨跌幅（百分比 * 100）
+	params := url.Values{"secid": {secID}, "fields": {"f43,f58,f60,f170"}}
 	u := eastMoneyStockGetURL + "?" + params.Encode()
 	req, err := http.NewRequest(http.MethodGet, u, nil)
 	if err != nil {
@@ -192,6 +192,7 @@ func (a *AShareIndexFetcher) fetchOneStock(code string) *NewsItem {
 		Data *struct {
 			F43  float64 `json:"f43"`  // 最新价（分）
 			F58  string  `json:"f58"`  // 名称
+			F60  float64 `json:"f60"`  // 昨收（分）
 			F170 float64 `json:"f170"` // 涨跌幅（百分比 * 100）
 		} `json:"data"`
 	}
@@ -203,8 +204,9 @@ func (a *AShareIndexFetcher) fetchOneStock(code string) *NewsItem {
 	if len(code) >= 1 && (code[0] == '6' || code[0] == '9') {
 		itemURL = "https://quote.eastmoney.com/sh" + code + ".html"
 	}
-	// 东方财富接口个股 f43 单位为分，除以 100 得到元；f170 为涨跌幅（百分比 * 100）
+	// 东方财富接口个股 f43/f60 单位为分，除以 100 得到元；f170 为涨跌幅（百分比 * 100）
 	price := d.F43 / 100
+	preClose := d.F60 / 100
 	pct := d.F170 / 100
 	changeStr := strconv.FormatFloat(pct, 'f', 2, 64)
 	desc := d.F58 + " " + strconv.FormatFloat(price, 'f', 2, 64) + " " + changeStr + "%"
@@ -219,8 +221,9 @@ func (a *AShareIndexFetcher) fetchOneStock(code string) *NewsItem {
 		PublishedAt: now,
 		HotScore:    price,
 		RawData: map[string]any{
-			"price":  price,
-			"change": changeStr,
+			"price":    price,
+			"change":   changeStr,
+			"preClose": preClose,
 		},
 	}
 }
@@ -255,8 +258,8 @@ func (a *AShareIndexFetcher) fetchIndices() []NewsItem {
 
 func (a *AShareIndexFetcher) fetchOneIndex(secID, indexName string, now time.Time) *NewsItem {
 	client := &http.Client{Timeout: 10 * time.Second}
-	// f43: 最新点位（×100），f170: 涨跌幅（百分比 * 100），f58: 名称
-	params := url.Values{"secid": {secID}, "fields": {"f43,f58,f170"}}
+	// f43: 最新点位（×100），f58: 名称，f60: 昨收（×100），f170: 涨跌幅（百分比 * 100）
+	params := url.Values{"secid": {secID}, "fields": {"f43,f58,f60,f170"}}
 	u := eastMoneyStockGetURL + "?" + params.Encode()
 	req, err := http.NewRequest(http.MethodGet, u, nil)
 	if err != nil {
@@ -279,6 +282,7 @@ func (a *AShareIndexFetcher) fetchOneIndex(secID, indexName string, now time.Tim
 		Data *struct {
 			F43  float64 `json:"f43"`  // 最新价（×100）
 			F58  string  `json:"f58"`  // 名称
+			F60  float64 `json:"f60"`  // 昨收（×100）
 			F170 float64 `json:"f170"` // 涨跌幅（百分比 * 100）
 		} `json:"data"`
 	}
@@ -296,8 +300,9 @@ func (a *AShareIndexFetcher) fetchOneIndex(secID, indexName string, now time.Tim
 	} else if secID == "0.399006" {
 		itemURL = "https://quote.eastmoney.com/sz399006.html"
 	}
-	// 东方财富接口对指数返回的 f43 为实际点位的 100 倍，需除以 100；f170 为涨跌幅（百分比 * 100）
+	// 东方财富接口对指数返回的 f43/f60 为实际点位的 100 倍，需除以 100；f170 为涨跌幅（百分比 * 100）
 	price := d.F43 / 100
+	preClose := d.F60 / 100
 	pct := d.F170 / 100
 	changeStr := strconv.FormatFloat(pct, 'f', 2, 64)
 	desc := name + " " + strconv.FormatFloat(price, 'f', 2, 64) + " " + changeStr + "%"
@@ -311,8 +316,9 @@ func (a *AShareIndexFetcher) fetchOneIndex(secID, indexName string, now time.Tim
 		PublishedAt: now,
 		HotScore:    price,
 		RawData: map[string]any{
-			"price":  price,
-			"change": changeStr,
+			"price":    price,
+			"change":   changeStr,
+			"preClose": preClose,
 		},
 	}
 }

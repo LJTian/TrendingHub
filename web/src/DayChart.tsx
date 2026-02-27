@@ -45,8 +45,10 @@ interface Props {
   showXAxis?: boolean;
   /** 额外的根节点 className，默认 'gc' */
   className?: string;
-  /** 是否显示基准线（第一个点的水平线），默认 false */
+  /** 是否显示基准线（水平虚线），默认 false */
   showBaseline?: boolean;
+  /** 基准线对应的数值（如昨收价）；不传则用第一个点的 value */
+  baselineValue?: number;
   /** 是否显示背景网格线，默认 true；迷你图可以关闭以更简洁 */
   showGrid?: boolean;
   /** Y 轴上下留白比例，默认 0.12；迷你图可以调小一点 */
@@ -109,6 +111,7 @@ export const DayChart: React.FC<Props> = ({
   showXAxis = true,
   className,
   showBaseline = false,
+  baselineValue: baselineValueProp,
   showGrid = true,
   padRatio = 0.12,
   xMode = "time",
@@ -136,16 +139,47 @@ export const DayChart: React.FC<Props> = ({
         });
 
   const values = series.map((p) => p.value);
-  const rawMin = Math.min(...values);
-  const rawMax = Math.max(...values);
-  const rawRange = rawMax - rawMin || 1;
-  const pad = rawRange * padRatio;
-  const yMin = rawMin - pad;
-  const yRange = (rawMax + pad) - yMin;
+  // 基准线数值：优先使用传入的昨收价，否则用第一个点的 value
+  const baselineValue =
+    baselineValueProp != null ? baselineValueProp : series[0].value;
+  const lastValue = series[series.length - 1].value;
 
-  // 基准线：第一个点的价格（开盘价），使用平滑后的第一个点
-  const baselineValue = series[0].value;
+  let yMin: number;
+  let yMax: number;
+  const useBaselineCenter =
+    showBaseline && baselineValueProp != null && baselineValueProp > 0;
+  if (useBaselineCenter) {
+    // 虚线置于中间：以昨收为中线，上下留对称区间（仅昨收有效时）
+    const dataMin = Math.min(...values);
+    const dataMax = Math.max(...values);
+    const devUp = Math.max(0, dataMax - baselineValue);
+    const devDown = Math.max(0, baselineValue - dataMin);
+    const halfRange = Math.max(devUp, devDown, (dataMax - dataMin) * 0.1) * (1 + padRatio);
+    yMin = baselineValue - halfRange;
+    yMax = baselineValue + halfRange;
+  } else {
+    const rangeMin = Math.min(...values, showBaseline ? baselineValue : Infinity);
+    const rangeMax = Math.max(...values, showBaseline ? baselineValue : -Infinity);
+    const rawRange = rangeMax - rangeMin || 1;
+    const pad = rawRange * padRatio;
+    yMin = rangeMin - pad;
+    yMax = rangeMax + pad;
+  }
+  const yRange = yMax - yMin;
+
+  // 基准线在 Y 轴 50% 处（居中）
   const baselineY = (1 - (baselineValue - yMin) / yRange) * 100;
+
+  // 折线颜色：仅当昨收有效（>0）时按涨跌——涨红、跌绿、平黑；否则用传入的 color
+  const hasValidPreClose = baselineValueProp != null && baselineValueProp > 0;
+  const lineColor: [string, string] =
+    hasValidPreClose
+      ? lastValue > baselineValue
+        ? ["#ef4444", "#dc2626"]
+        : lastValue < baselineValue
+          ? ["#22c55e", "#16a34a"]
+          : ["#374151", "#374151"]
+      : color;
 
   const count = series.length;
   const dataPoints = series.map((p, idx) => {
@@ -175,7 +209,10 @@ export const DayChart: React.FC<Props> = ({
       ? `M 0 ${H} L 0 ${dataPoints[0].ny * H} L ${W} ${dataPoints[0].ny * H} L ${W} ${H} Z`
       : `M 0 ${H} L ${dataPoints.map((p) => `${p.nx * W} ${p.ny * H}`).join(" L ")} L ${dataPoints[dataPoints.length - 1].nx * W} ${H} Z`;
 
-  const priceTicks = [rawMax, (rawMin + rawMax) / 2, rawMin];
+  const priceTicks =
+    useBaselineCenter
+      ? [yMax, baselineValue, yMin]
+      : [yMax, (yMin + yMax) / 2, yMin];
   const priceTickPcts = priceTicks.map((p) => (1 - (p - yMin) / yRange) * 100);
   const gridYs = priceTickPcts.map((pct) => (pct / 100) * H);
 
@@ -204,12 +241,12 @@ export const DayChart: React.FC<Props> = ({
         <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="gc-svg" style={{ height }}>
           <defs>
             <linearGradient id={strokeId} x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%" stopColor={color[0]} />
-              <stop offset="100%" stopColor={color[1]} />
+              <stop offset="0%" stopColor={lineColor[0]} />
+              <stop offset="100%" stopColor={lineColor[1]} />
             </linearGradient>
             <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={color[0]} stopOpacity="0.18" />
-              <stop offset="100%" stopColor={color[0]} stopOpacity="0.02" />
+              <stop offset="0%" stopColor={lineColor[0]} stopOpacity="0.18" />
+              <stop offset="100%" stopColor={lineColor[0]} stopOpacity="0.02" />
             </linearGradient>
           </defs>
           {showGrid &&
@@ -226,16 +263,16 @@ export const DayChart: React.FC<Props> = ({
               />
             ))}
           {showBaseline && (
-            <line 
-              x1={0} 
-              y1={(baselineY / 100) * H} 
-              x2={W} 
-              y2={(baselineY / 100) * H} 
-              stroke="currentColor" 
-              strokeWidth="1" 
-              strokeDasharray="4,4" 
-              opacity="0.5" 
-              vectorEffect="non-scaling-stroke" 
+            <line
+              x1={0}
+              y1={(baselineY / 100) * H}
+              x2={W}
+              y2={(baselineY / 100) * H}
+              stroke="#cbd5e1"
+              strokeWidth="1"
+              strokeDasharray="4,4"
+              opacity="0.8"
+              vectorEffect="non-scaling-stroke"
             />
           )}
           <path d={areaD} fill={`url(#${fillId})`} />

@@ -132,13 +132,14 @@ export const AshareStocksManager: React.FC<AshareStocksManagerProps> = (props) =
           </button>
         </div>
       </div>
-      <p className="ashare-stocks-hint">添加后将在本模块展示行情，约 30 分钟更新一次。</p>
+      <p className="ashare-stocks-hint">添加后将在本模块展示行情，约 3 分钟更新一次。</p>
       {error && <div className="ashare-stocks-error">{error}</div>}
       {codes.length > 0 && (
         <ul className="ashare-stocks-list">
           {codes.map((code) => {
             const item = byCode.get(code);
             const change = (item?.extraData?.change as string | undefined) ?? "";
+            const preClose = item?.extraData?.preClose as number | undefined;
             const changeDisplay = change !== "" ? change : "0.00";
             const isUp = change === "" || !change.startsWith("-");
             const series = seriesByCode.get(code) ?? [];
@@ -212,6 +213,7 @@ export const AshareStocksManager: React.FC<AshareStocksManagerProps> = (props) =
                               showYAxis={false}
                               showXAxis={false}
                               showBaseline={true}
+                              baselineValue={preClose}
                               showGrid={false}
                               padRatio={0.06}
                               smoothWindow={smoothWindow}
