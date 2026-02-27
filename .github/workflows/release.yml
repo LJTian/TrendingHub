@@ -2,8 +2,8 @@ name: Release Pipeline
 
 on:
   push:
-    branches:
-      - release/**
+    tags:
+      - "release-*"
   workflow_dispatch:
 
 env:
@@ -71,8 +71,9 @@ jobs:
       - name: Derive date-based tag
         id: release_tag
         run: |
-          date_tag=$(date -u +%Y%m%d)
-          echo "release_tag=${date_tag}" >>$GITHUB_OUTPUT
+          raw="${GITHUB_REF_NAME}"          # e.g. release-20260227
+          date_tag="${raw#release-}"        # -> 20260227
+          echo "release_tag=${date_tag}" >>"$GITHUB_OUTPUT"
 
       - name: Log in to container registry
         uses: docker/login-action@v2
