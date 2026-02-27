@@ -132,3 +132,58 @@ docker compose up -d
 ```
 
 如需在其它部署方式下启用，只需将上述两个环境变量注入运行 `trendinghub` 可执行文件即可。
+
+### CI / CD 与容器镜像发布
+
+项目提供两个现成的 GitHub Actions 工作流：
+
+- `CI`（`.github/workflows/ci.yml`）：对 `main` 分支的 push/PR，先运行 Go 的单元测试，然后进入 `web` 目录构建 Vite 静态资源，确保前后端都能在干净环境下编译。
+- `Publish Container`（`.github/workflows/docker-publish.yml`）：基于 Docker Buildx 构建 `linux/amd64` 和 `linux/arm64` 镜像，并推送到容器仓库，默认命名为 `docker.io/ljtian/trendinghub`，支持手动触发（`workflow_dispatch`）或每次向 `main` push。
+
+要让镜像成功推送，需要在仓库设置以下 Secrets：
+
+| 名称 | 说明 |
+|------|------|
+| `CONTAINER_REGISTRY_USERNAME` | 容器仓库登录用户名（Docker Hub、GitHub Packages、ArgoCD Registry 等） |
+| `CONTAINER_REGISTRY_PASSWORD` | 对应的访问凭证（Docker Hub Access Token、GitHub Personal Access Token、或 Registry 密码） |
+| `CONTAINER_REGISTRY_URL`（可选） | 镜像仓库地址，默认 `docker.io`。将镜像推送到其它地址时填如 `ghcr.io` |
+| `CONTAINER_REGISTRY_IMAGE`（可选） | 镜像名（包含仓库），默认 `ljtian/trendinghub`。例如 `myorg/trendinghub` |
+
+Workflow 会使用上述凭证登录，在 `Dockerfile` 所在目录构建并同时推送 `latest` 与 `${{ github.sha }}` 标签，拿到不同平台的镜像都可以直接拉取或用于后续 CD。
+
+### 发布分支策略
+
+为了把镜像交付和测试流程串联在一起，仓库专门提供一个 `release/*` 分支供正式发布用：
+
+- 只要推送 `release/xxx`（或在 Actions 页面手动触发 `Release Pipeline`），工作流会先执行完整的自动化测试（Go 单元测试 + 前端打包），与主分支 `CI` 流程完全一致；
+- 测试成功后续 job 会构建 `linux/amd64` 与 `linux/arm64` 镜像，并推送 `latest`、`release-xxx`（命名里把 `/` 替换为 `-`）以及 `${{ github.sha }}` 标签到容器仓库；
+- 镜像推送仍然复用 `CONTAINER_REGISTRY_*` secrets，不需要额外配置；
+- 如果你希望在 release 之后做额外的部署（比如 GitHub Releases、Kubernetes rollouts），可以再接一个依赖 release 镜像标签的工作流。
+
+在本地执行 `git switch -c release/1.0 && git push origin release/1.0` 就能触发上述流程，测试通过后镜像会自动上传，后续可以直接拉取 `ghcr.io/myorg/trendinghub:release-1.0`（或你设定的仓库）。
+
+### 本地统一验证命令
+
+项目根目录新增了 `Makefile`，封装了 CI/Release 里相同的验证步骤：
+
+```bash
+make test
+```
+
+该命令依次执行 `go test ./...`、`npm ci`（在 `web` 下）与 `npm run build`，如果你希望仅跑 Go、前端单独构建也可以使用 `make backend-test` 或 `make frontend-build`（后者会在构建前自动安装依赖）。
+
+### 本地 CI / CD 验证流程
+
+在推动到 GitHub 之前可以本地模拟 CI/CD：
+
+- **本地 CI**：使用 `make test`（或者直接 `go test ./...` + `cd web && npm ci && npm run build`）来验证后端测试和前端打包，和 `.github/workflows/ci.yml` / `.github/workflows/release.yml` 中的 `tests` job 保持一致。
+- **本地 CD（容器构建）**：先保证 `docker buildx` 可用，再运行：
+  ```bash
+  docker buildx build --platform linux/amd64,linux/arm64 \
+    -t ${REGISTRY:-docker.io}/${IMAGE:-ljtian/trendinghub}:local \
+    --push .
+  ```
+ 这里会复用 CI 中的多个标签逻辑（可改成 `--load` 仅用于本地测试），登录凭证可以提前用 `docker login` 或设置 `CONTAINER_REGISTRY_USERNAME` / `CONTAINER_REGISTRY_PASSWORD` 环境变量。
+- **本地 Release 预演**：如果要模拟 `release/*` 分支的镜像标签逻辑，可在 push 前设置 `GITHUB_REF_NAME=release/1.0`、`GITHUB_SHA=$(git rev-parse HEAD)`，再从 `publish` job 中复制 `docker buildx` 相关命令（或者用 `make` 结合 `REGISTRY=... IMAGE=...` 手动调用）。
+
+这样一来无需每次推送都等待云端运行 CI/CD，就可以在开发机先对关键流程做一次完整验证。

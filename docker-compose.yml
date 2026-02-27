@@ -1,8 +1,6 @@
-version: "3.9"
-
 services:
   postgres:
-    image: postgres:16-alpine
+    image: "${IMAGE_REGISTRY:-docker.io}/library/postgres:16-alpine"
     container_name: trendinghub-postgres
     environment:
       POSTGRES_USER: trendinghub
@@ -14,14 +12,14 @@ services:
       - pgdata:/var/lib/postgresql/data
 
   redis:
-    image: redis:7-alpine
+    image: "${IMAGE_REGISTRY:-docker.io}/library/redis:7-alpine"
     container_name: trendinghub-redis
     ports:
       - "6380:6379"
 
   app:
     build: .
-    image: trendinghub:latest
+    image: "${IMAGE_REGISTRY:-docker.io}/library/trendinghub:latest"
     container_name: trendinghub-app
     ports:
       - "9000:9000"
