@@ -10,6 +10,7 @@ export const IranCostTicker: React.FC = () => {
   const [data, setData] = useState<IranWarCost | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [displayTotal, setDisplayTotal] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,10 +46,36 @@ export const IranCostTicker: React.FC = () => {
     };
   }, []);
 
+  // 使用 perSecond 在前端做线性外推，让数值在两次刷新之间平滑增长
+  useEffect(() => {
+    if (!data || !Number.isFinite(data.total) || !Number.isFinite(data.perSecond)) {
+      setDisplayTotal(null);
+      return;
+    }
+    const baseTotal = data.total;
+    const perSec = data.perSecond;
+    const baseTime = Date.now();
+
+    const update = () => {
+      const elapsed = (Date.now() - baseTime) / 1000;
+      setDisplayTotal(baseTotal + perSec * elapsed);
+    };
+
+    update();
+    // 你选择了“每秒刷新一次”，这里采用 1s 更新节奏，既平滑又不刺眼
+    const timer = setInterval(update, 1000);
+    return () => clearInterval(timer);
+  }, [data?.total, data?.perSecond, data?.fetchedAt]);
+
+  const totalValue =
+    displayTotal != null && Number.isFinite(displayTotal)
+      ? displayTotal
+      : data && Number.isFinite(data.total)
+        ? data.total
+        : NaN;
+
   const totalDisplay =
-    data && Number.isFinite(data.total)
-      ? `$${usdFormatter.format(data.total)}`
-      : "-";
+    !Number.isNaN(totalValue) ? `$${usdFormatter.format(totalValue)}` : "-";
 
   return (
     <div className="home-card iran-cost-card">

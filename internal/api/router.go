@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/LJTian/TrendingHub/internal/config"
 	"github.com/LJTian/TrendingHub/internal/storage"
+	"github.com/chromedp/chromedp"
 	"github.com/gin-gonic/gin"
 )
 
@@ -531,179 +531,392 @@ func (s *Server) listNewsDates(c *gin.Context) {
 	})
 }
 
-// ========== Iran War Cost Tracker 抓取 ==========
+// ========== Iran War Cost Tracker 抓取（使用 headless browser） ==========
 
-var iranCostNumberRe = regexp.MustCompile(`\$([0-9][0-9,]*)`)
+var iranCostNumberRe = regexp.MustCompile(`\$([0-9][0-9,]+)`)
 
-// 三阶段日成本模型（美元/天），源自 iran-cost-ticker.com 的 Methodology 说明：
-// initial strikes: ~380M/day (Days 0–3)
-// sustained operations: ~220M/day (Days 3–10)
-// air dominance / ISR-heavy: ~155M/day (Day 10+)
-const (
-	iranPhase1Rate = 380_000_000
-	iranPhase2Rate = 220_000_000
-	iranPhase3Rate = 155_000_000
-)
+type iranTimelineEvent struct {
+	Time        string `json:"time"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Cost        string `json:"cost"`
+}
 
-var iranWarStart = time.Date(2026, 2, 28, 0, 0, 0, 0, time.UTC)
+type iranHumanCost struct {
+	USServiceMembersKilled string              `json:"usServiceMembersKilled"`
+	USWounded              string              `json:"usWounded"`
+	IranMilitaryCasualties string              `json:"iranMilitaryCasualties"`
+	IranCivilianCasualties string              `json:"iranCivilianCasualties"`
+	USIncidents            []iranHumanIncident `json:"usIncidents"`
+	IranIncidents          []iranHumanIncident `json:"iranIncidents"`
+}
+
+type iranHumanIncident struct {
+	Date        string `json:"date"`
+	Description string `json:"description"`
+	Count       string `json:"count"`
+}
 
 type iranWarCostResp struct {
-	Total        float64   `json:"total"`
-	OpsTotal     float64   `json:"opsTotal"`
-	DiscreteTotal float64  `json:"discreteTotal"`
-	PerSecond    float64   `json:"perSecond"`
-	PerHour      float64   `json:"perHour"`
-	PerDay       float64   `json:"perDay"`
-	Phase        string    `json:"phase"`
-	Currency     string    `json:"currency"`
-	FetchedAt    time.Time `json:"fetchedAt"`
-	SourceURL    string    `json:"sourceUrl"`
-
-	// 人员伤亡（来自 Human Cost 区块）
-	USServiceMembersKilled   string `json:"usServiceMembersKilled"`
-	USWounded                string `json:"usWounded"`
-	IranMilitaryCasualties   string `json:"iranMilitaryCasualties"`
-	IranCivilianCasualties   string `json:"iranCivilianCasualties"`
+	Total         float64             `json:"total"`
+	OpsTotal      float64             `json:"opsTotal"`
+	DiscreteTotal float64             `json:"discreteTotal"`
+	PerSecond     float64             `json:"perSecond"`
+	PerHour       float64             `json:"perHour"`
+	PerDay        float64             `json:"perDay"`
+	Phase         string              `json:"phase"`
+	Currency      string              `json:"currency"`
+	FetchedAt     time.Time           `json:"fetchedAt"`
+	SourceURL     string              `json:"sourceUrl"`
+	Timeline      []iranTimelineEvent `json:"timeline"`
+	HumanCost     iranHumanCost       `json:"humanCost"`
 }
 
 func (s *Server) getIranWarCost(c *gin.Context) {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
+	ctx := c.Request.Context()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://iran-cost-ticker.com/", nil)
+	cacheKey := "iranwar:latest"
+	if s.store.Redis != nil {
+		if bs, err := s.store.Redis.Get(ctx, cacheKey).Bytes(); err == nil && len(bs) > 0 {
+			var cached iranWarCostResp
+			if err := json.Unmarshal(bs, &cached); err == nil {
+				c.JSON(http.StatusOK, gin.H{"code": "ok", "data": cached})
+				return
+			}
+		}
+	}
+
+	out, err := scrapeIranWarCost()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": "internal_error", "message": "failed to build request"})
-		return
-	}
-	req.Header.Set("User-Agent", "TrendingHubBot/1.0 (+github.com/LJTian/TrendingHub)")
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		log.Printf("iran-cost: request error: %v", err)
-		c.JSON(http.StatusBadGateway, gin.H{"code": "upstream_error", "message": "failed to fetch iran-cost-ticker.com"})
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		log.Printf("iran-cost: upstream status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-		c.JSON(http.StatusBadGateway, gin.H{"code": "upstream_error", "message": "iran-cost-ticker.com returned non-200"})
+		log.Printf("iran-cost: scrape error: %v", err)
+		c.JSON(http.StatusBadGateway, gin.H{"code": "upstream_error", "message": "failed to scrape iran-cost-ticker.com: " + err.Error()})
 		return
 	}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": "internal_error", "message": "failed to read upstream body"})
-		return
-	}
-	html := string(body)
+	go func(snapshot iranWarCostResp) {
+		if s.store == nil || s.store.DB == nil {
+			return
+		}
+		rec := &storage.IranWarCostSnapshot{
+			Total:         snapshot.Total,
+			OpsTotal:      snapshot.OpsTotal,
+			DiscreteTotal: snapshot.DiscreteTotal,
+			PerSecond:     snapshot.PerSecond,
+			PerHour:       snapshot.PerHour,
+			PerDay:        snapshot.PerDay,
+			Phase:         snapshot.Phase,
+			FetchedAt:     snapshot.FetchedAt,
+		}
+		if err := s.store.SaveIranWarSnapshot(rec); err != nil {
+			log.Printf("iran-cost: save snapshot error: %v", err)
+		}
+	}(*out)
 
-	// 1）离散事件总成本：从 "TOTAL DISCRETE COSTS" 段解析；失败则使用页面当前示例 890,000,000 兜底
-	discreteTotal, derr := extractIranDiscreteTotal(html)
-	if derr != nil {
-		log.Printf("iran-cost: discrete total parse error: %v", derr)
-		discreteTotal = 890_000_000
-	}
-
-	// 2）基于官方 Methodology 的三阶段模型，按时间计算 opsTotal / liveTotal
-	now := time.Now().UTC()
-	if now.Before(iranWarStart) {
-		now = iranWarStart
-	}
-	days := now.Sub(iranWarStart).Hours() / 24
-	if days < 0 {
-		days = 0
-	}
-
-	var opsTotal float64
-	var dailyRate float64
-	var phase string
-
-	switch {
-	case days <= 3:
-		opsTotal = days * iranPhase1Rate
-		dailyRate = iranPhase1Rate
-		phase = "initial_strikes"
-	case days <= 10:
-		opsTotal = 3*iranPhase1Rate + (days-3)*iranPhase2Rate
-		dailyRate = iranPhase2Rate
-		phase = "sustained_operations"
-	default:
-		opsTotal = 3*iranPhase1Rate + 7*iranPhase2Rate + (days-10)*iranPhase3Rate
-		dailyRate = iranPhase3Rate
-		phase = "air_dominance_isr"
+	if s.store.Redis != nil {
+		if bs, err := json.Marshal(out); err == nil {
+			_ = s.store.Redis.Set(context.Background(), cacheKey, bs, 60*time.Second).Err()
+		}
 	}
 
-	total := opsTotal + discreteTotal
-	perDay := dailyRate
-	perHour := dailyRate / 24
-	perSecond := dailyRate / (24 * 3600)
-
-	// 3）人员伤亡数字解析（Human Cost 区块），解析失败时字段留空字符串
-	usKilled, usWounded, iranMil, iranCiv := extractIranHumanCosts(html)
-
-	out := iranWarCostResp{
-		Total:        total,
-		OpsTotal:     opsTotal,
-		DiscreteTotal: discreteTotal,
-		PerSecond:    perSecond,
-		PerHour:      perHour,
-		PerDay:       perDay,
-		Phase:        phase,
-		Currency:     "USD",
-		FetchedAt:    now,
-		SourceURL:    "https://iran-cost-ticker.com/",
-
-		USServiceMembersKilled: usKilled,
-		USWounded:              usWounded,
-		IranMilitaryCasualties: iranMil,
-		IranCivilianCasualties: iranCiv,
-	}
 	c.JSON(http.StatusOK, gin.H{"code": "ok", "data": out})
 }
 
-// extractIranDiscreteTotal 从 "TOTAL DISCRETE COSTS" 行附近提取总离散成本，例如 "$890,000,000"
-func extractIranDiscreteTotal(html string) (float64, error) {
-	const marker = "TOTAL DISCRETE COSTS"
-	idx := strings.Index(html, marker)
-	if idx == -1 {
-		return 0, errors.New("marker not found")
-	}
-	segment := html[idx:]
-	if len(segment) > 600 {
-		segment = segment[:600]
-	}
-	m := iranCostNumberRe.FindStringSubmatch(segment)
-	if m == nil {
-		return 0, errors.New("no dollar number found near total discrete costs")
-	}
-	raw := strings.ReplaceAll(m[1], ",", "")
-	val, err := strconv.ParseFloat(raw, 64)
+// scrapeIranWarCost 使用 headless Chrome 渲染 iran-cost-ticker.com，等 JS 执行完毕后提取全部数据
+func scrapeIranWarCost() (*iranWarCostResp, error) {
+	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(),
+		append(chromedp.DefaultExecAllocatorOptions[:],
+			chromedp.Flag("headless", true),
+			chromedp.Flag("disable-gpu", true),
+			chromedp.Flag("no-sandbox", true),
+			chromedp.Flag("disable-dev-shm-usage", true),
+		)...,
+	)
+	defer allocCancel()
+
+	ctx, cancel := chromedp.NewContext(allocCtx)
+	defer cancel()
+
+	ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	var pageText string
+	err := chromedp.Run(ctx,
+		chromedp.Navigate("https://iran-cost-ticker.com/"),
+		// 等待 "TOTAL DISCRETE COSTS" 出现，这意味着 JS 已经渲染完时间线
+		chromedp.WaitVisible(`body`, chromedp.ByQuery),
+		chromedp.Sleep(5*time.Second),
+		chromedp.InnerHTML("body", &pageText, chromedp.ByQuery),
+	)
 	if err != nil {
-		return 0, fmt.Errorf("parse float from %q: %w", raw, err)
+		return nil, fmt.Errorf("chromedp run: %w", err)
 	}
-	return val, nil
+
+	// 去掉 HTML 标签，只保留文本方便正则匹配
+	text := stripHTMLTags(pageText)
+
+	out := &iranWarCostResp{
+		Currency:  "USD",
+		FetchedAt: time.Now().UTC(),
+		SourceURL: "https://iran-cost-ticker.com/",
+	}
+
+	// 1）提取主成本数字（Operation Epic Fury — Est. U.S. Cost Since Strikes Began 后面最大的 $ 数字）
+	out.Total = extractLargestDollarAfter(text, "Est. U.S. Cost Since Strikes Began")
+
+	// 2）提取每秒/每小时/每天成本
+	out.PerSecond = extractDollarNear(text, "PER SECOND")
+	out.PerHour = extractDollarNear(text, "PER HOUR")
+	out.PerDay = extractDollarNear(text, "PER DAY")
+
+	// 3）提取 TOTAL DISCRETE COSTS
+	out.DiscreteTotal = extractDollarNear(text, "TOTAL DISCRETE COSTS")
+
+	// 4）计算 opsTotal
+	out.OpsTotal = out.Total - out.DiscreteTotal
+	if out.OpsTotal < 0 {
+		out.OpsTotal = 0
+	}
+
+	// 5）phase：从文本中查找当前阶段标签
+	out.Phase = extractPhase(text)
+
+	// 6）Timeline 事件解析
+	out.Timeline = extractTimeline(text)
+
+	// 7）Human Cost 解析
+	out.HumanCost = extractHumanCostFromText(text)
+
+	return out, nil
 }
 
-// extractIranHumanCosts 从 Human Cost 区块提取人员伤亡统计（字符串形式，保留 "+" 号等）
-func extractIranHumanCosts(html string) (usKilled, usWounded, iranMilitary, iranCivilian string) {
-	reUSKilled := regexp.MustCompile(`Service members killed[^0-9+]*([0-9+]+)`)
-	reUSWounded := regexp.MustCompile(`Wounded[^0-9+]*([0-9+]+)`)
-	reIranMil := regexp.MustCompile(`Military casualties\s*\(est\.\)[^0-9+]*([0-9+]+)`)
-	reIranCiv := regexp.MustCompile(`Civilian casualties\s*\(est\.\)[^0-9+]*([0-9+]+)`)
+// stripHTMLTags 简单地去除 HTML 标签，保留纯文本
+func stripHTMLTags(s string) string {
+	re := regexp.MustCompile(`<[^>]*>`)
+	clean := re.ReplaceAllString(s, " ")
+	// 合并多余空白
+	ws := regexp.MustCompile(`\s+`)
+	return ws.ReplaceAllString(clean, " ")
+}
 
-	if m := reUSKilled.FindStringSubmatch(html); len(m) == 2 {
-		usKilled = m[1]
+// parseDollar 将 "$1,234,567" 格式字符串解析为 float64
+func parseDollar(s string) float64 {
+	s = strings.ReplaceAll(s, "$", "")
+	s = strings.ReplaceAll(s, ",", "")
+	s = strings.TrimSpace(s)
+	v, _ := strconv.ParseFloat(s, 64)
+	return v
+}
+
+// extractLargestDollarAfter 在 marker 之后找到最大的美元金额
+func extractLargestDollarAfter(text, marker string) float64 {
+	idx := strings.Index(text, marker)
+	if idx == -1 {
+		return 0
 	}
-	if m := reUSWounded.FindStringSubmatch(html); len(m) == 2 {
-		usWounded = m[1]
+	segment := text[idx:]
+	if len(segment) > 500 {
+		segment = segment[:500]
 	}
-	if m := reIranMil.FindStringSubmatch(html); len(m) == 2 {
-		iranMilitary = m[1]
+	matches := iranCostNumberRe.FindAllStringSubmatch(segment, -1)
+	var best float64
+	for _, m := range matches {
+		v := parseDollar(m[0])
+		if v > best {
+			best = v
+		}
 	}
-	if m := reIranCiv.FindStringSubmatch(html); len(m) == 2 {
-		iranCivilian = m[1]
+	return best
+}
+
+// extractDollarNear 在 marker 附近（前后 300 字符）找到第一个 $ 金额
+func extractDollarNear(text, marker string) float64 {
+	idx := strings.Index(text, marker)
+	if idx == -1 {
+		return 0
 	}
-	return
+	start := idx
+	end := idx + len(marker) + 300
+	if end > len(text) {
+		end = len(text)
+	}
+	segment := text[start:end]
+	m := iranCostNumberRe.FindStringSubmatch(segment)
+	if m == nil {
+		return 0
+	}
+	return parseDollar(m[0])
+}
+
+func extractPhase(text string) string {
+	phases := []struct {
+		keyword string
+		label   string
+	}{
+		{"AIR DOMINANCE", "air_dominance_isr"},
+		{"SUSTAINED OPERATIONS", "sustained_operations"},
+		{"INITIAL STRIKES", "initial_strikes"},
+	}
+	upper := strings.ToUpper(text)
+	for _, p := range phases {
+		if strings.Contains(upper, p.keyword) {
+			return p.label
+		}
+	}
+	return "unknown"
+}
+
+// extractTimeline 从纯文本中提取 Operation Timeline & Discrete Costs 段
+var timelineLineRe = regexp.MustCompile(`(\d{2}-\d{2}\s+\d{2}:\d{2})\s+(.+?)(?:\$([0-9,]+(?:,\d{3})*)|--)\s*`)
+
+func extractTimeline(text string) []iranTimelineEvent {
+	idx := strings.Index(text, "OPERATION TIMELINE")
+	if idx == -1 {
+		return nil
+	}
+	endIdx := strings.Index(text[idx:], "TOTAL DISCRETE COSTS")
+	var segment string
+	if endIdx == -1 {
+		segment = text[idx:]
+	} else {
+		segment = text[idx : idx+endIdx]
+	}
+
+	// 匹配形如 "02-28 04:00 Operation Epic Fury begins ... $270,000,000" 或 "... --"
+	re := regexp.MustCompile(`(\d{2}-\d{2}\s+\d{2}:\d{2})\s+(.*?)(\$[0-9,]+|--)\s`)
+	matches := re.FindAllStringSubmatch(segment, -1)
+
+	var events []iranTimelineEvent
+	for _, m := range matches {
+		title := strings.TrimSpace(m[2])
+		cost := strings.TrimSpace(m[3])
+		if cost == "--" {
+			cost = ""
+		}
+		events = append(events, iranTimelineEvent{
+			Time:  strings.TrimSpace(m[1]),
+			Title: title,
+			Cost:  cost,
+		})
+	}
+
+	// 如果上面的简单正则没匹配到，尝试更宽松的方式：按日期时间分割
+	if len(events) == 0 {
+		re2 := regexp.MustCompile(`(\d{2}-\d{2}\s+\d{2}:\d{2})`)
+		locs := re2.FindAllStringIndex(segment, -1)
+		for i, loc := range locs {
+			var block string
+			if i+1 < len(locs) {
+				block = segment[loc[0]:locs[i+1][0]]
+			} else {
+				block = segment[loc[0]:]
+			}
+			timeStr := strings.TrimSpace(segment[loc[0]:loc[1]])
+			rest := strings.TrimSpace(block[len(timeStr):])
+
+			cost := ""
+			if cm := iranCostNumberRe.FindString(rest); cm != "" {
+				cost = cm
+			}
+
+			title := rest
+			if cost != "" {
+				ci := strings.LastIndex(title, cost)
+				if ci > 0 {
+					title = strings.TrimSpace(title[:ci])
+				}
+			}
+			// 去掉末尾 "--"
+			title = strings.TrimRight(title, " -")
+			title = strings.TrimSpace(title)
+
+			if title != "" {
+				events = append(events, iranTimelineEvent{
+					Time:  timeStr,
+					Title: title,
+					Cost:  cost,
+				})
+			}
+		}
+	}
+
+	return events
+}
+
+// extractHumanCostFromText 从纯文本中提取 Human Cost 区块
+func extractHumanCostFromText(text string) iranHumanCost {
+	hc := iranHumanCost{}
+
+	reNum := regexp.MustCompile(`([0-9]+\+?)`)
+
+	// Service members killed ... 数字
+	if idx := strings.Index(text, "Service members killed"); idx != -1 {
+		seg := text[idx : idx+80]
+		if m := reNum.FindString(seg[len("Service members killed"):]); m != "" {
+			hc.USServiceMembersKilled = m
+		}
+	}
+
+	// Wounded ... 数字（在 UNITED STATES 区块）
+	usIdx := strings.Index(text, "UNITED STATES")
+	if usIdx == -1 {
+		usIdx = 0
+	}
+	if idx := strings.Index(text[usIdx:], "Wounded"); idx != -1 {
+		seg := text[usIdx+idx : usIdx+idx+60]
+		if m := reNum.FindString(seg[len("Wounded"):]); m != "" {
+			hc.USWounded = m
+		}
+	}
+
+	// Military casualties (est.) ... 数字
+	if idx := strings.Index(text, "Military casualties"); idx != -1 {
+		seg := text[idx : idx+80]
+		if m := reNum.FindString(seg[len("Military casualties"):]); m != "" {
+			hc.IranMilitaryCasualties = m
+		}
+	}
+
+	// Civilian casualties (est.) ... 数字
+	if idx := strings.Index(text, "Civilian casualties"); idx != -1 {
+		seg := text[idx : idx+80]
+		if m := reNum.FindString(seg[len("Civilian casualties"):]); m != "" {
+			hc.IranCivilianCasualties = m
+		}
+	}
+
+	// 解析具体事件：日期 + 描述 + 数字
+	incidentRe := regexp.MustCompile(`(2026-\d{2}-\d{2})\s+(.*?)\s+(\d+\+?)(?:\s|$)`)
+
+	// US 事件（在 UNITED STATES 和 IRAN 之间）
+	iranIdx := strings.Index(text, "I R A N")
+	if iranIdx == -1 {
+		iranIdx = strings.Index(text, "IRAN")
+	}
+	if usIdx > 0 && iranIdx > usIdx {
+		usSeg := text[usIdx:iranIdx]
+		for _, m := range incidentRe.FindAllStringSubmatch(usSeg, -1) {
+			hc.USIncidents = append(hc.USIncidents, iranHumanIncident{
+				Date:        m[1],
+				Description: strings.TrimSpace(m[2]),
+				Count:       m[3],
+			})
+		}
+	}
+
+	// Iran 事件（IRAN 之后）
+	if iranIdx > 0 {
+		iranSeg := text[iranIdx:]
+		if len(iranSeg) > 2000 {
+			iranSeg = iranSeg[:2000]
+		}
+		for _, m := range incidentRe.FindAllStringSubmatch(iranSeg, -1) {
+			hc.IranIncidents = append(hc.IranIncidents, iranHumanIncident{
+				Date:        m[1],
+				Description: strings.TrimSpace(m[2]),
+				Count:       m[3],
+			})
+		}
+	}
+
+	return hc
 }

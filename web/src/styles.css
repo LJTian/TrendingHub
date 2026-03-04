@@ -744,6 +744,115 @@ body {
   color: #f97316;
 }
 
+/* Timeline 表格 */
+.iranwar-timeline {
+  padding: 16px 24px 24px;
+  overflow-x: auto;
+}
+
+.iranwar-timeline-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.iranwar-timeline-table thead {
+  border-bottom: 2px solid var(--cursor-border-strong);
+}
+
+.iranwar-timeline-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cursor-text-light);
+  letter-spacing: 0.04em;
+  padding: 8px 12px;
+}
+
+.iranwar-timeline-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--cursor-border);
+  vertical-align: top;
+  line-height: 1.45;
+}
+
+.iranwar-tl-time {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--cursor-text-muted);
+  width: 100px;
+}
+
+.iranwar-tl-event {
+  color: var(--cursor-text);
+}
+
+.iranwar-tl-cost {
+  text-align: right;
+  white-space: nowrap;
+  width: 140px;
+}
+
+.iranwar-tl-cost-val {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #ef4444;
+}
+
+.iranwar-tl-cost-na {
+  color: var(--cursor-text-light);
+}
+
+.iranwar-tl-total-row {
+  border-top: 2px solid var(--cursor-border-strong);
+}
+
+.iranwar-tl-total-row td {
+  border-bottom: none;
+}
+
+.iranwar-tl-total-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--cursor-text);
+  padding: 12px 12px;
+}
+
+/* Human Cost incidents */
+.iranwar-human-incidents {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.iranwar-human-incident {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.iranwar-hi-date {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.5);
+  width: 80px;
+}
+
+.iranwar-hi-desc {
+  flex: 1;
+  min-width: 0;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.iranwar-hi-count {
+  flex-shrink: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 @media (max-width: 900px) {
   .iranwar-layout {
     grid-template-columns: 1fr;

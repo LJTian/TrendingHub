@@ -100,7 +100,7 @@ func NewStore(dsn, redisAddr string) (*Store, error) {
 		return nil, fmt.Errorf("failed to connect after %d attempts: %w", dbConnectRetries, err)
 	}
 
-	if err := db.AutoMigrate(&Channel{}, &News{}, &WeatherCity{}, &WeatherCache{}, &AShareStock{}); err != nil {
+	if err := db.AutoMigrate(&Channel{}, &News{}, &WeatherCity{}, &WeatherCache{}, &AShareStock{}, &IranWarCostSnapshot{}); err != nil {
 		return nil, err
 	}
 	// 按频道分表：与 news 同结构，便于按 source 路由；并行建表

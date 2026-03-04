@@ -49,6 +49,28 @@ export interface WeatherItem {
   weather: WttrResponse;
 }
 
+export interface IranTimelineEvent {
+  time: string;
+  title: string;
+  description?: string;
+  cost: string;
+}
+
+export interface IranHumanIncident {
+  date: string;
+  description: string;
+  count: string;
+}
+
+export interface IranHumanCost {
+  usServiceMembersKilled: string;
+  usWounded: string;
+  iranMilitaryCasualties: string;
+  iranCivilianCasualties: string;
+  usIncidents?: IranHumanIncident[];
+  iranIncidents?: IranHumanIncident[];
+}
+
 export interface IranWarCost {
   total: number;
   opsTotal: number;
@@ -60,8 +82,6 @@ export interface IranWarCost {
   currency: string;
   fetchedAt: string;
   sourceUrl: string;
-  usServiceMembersKilled?: string;
-  usWounded?: string;
-  iranMilitaryCasualties?: string;
-  iranCivilianCasualties?: string;
+  timeline?: IranTimelineEvent[];
+  humanCost?: IranHumanCost;
 }
