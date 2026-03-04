@@ -62,6 +62,11 @@ func sourceLangForMyMemory(s string) string {
 	return "en"
 }
 
+// TranslateToChinese 供其他包复用：依次尝试 Google Translate 直接 API → MyMemory，均失败则返回原文
+func TranslateToChinese(text string) string {
+	return translateToChinese(text)
+}
+
 // translateToChinese 依次尝试 Google Translate 直接 API → MyMemory，均失败则返回原文
 func translateToChinese(text string) string {
 	text = strings.TrimSpace(text)

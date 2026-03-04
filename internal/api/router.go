@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LJTian/TrendingHub/internal/collector"
 	"github.com/LJTian/TrendingHub/internal/config"
 	"github.com/LJTian/TrendingHub/internal/storage"
 	"github.com/chromedp/chromedp"
@@ -607,6 +608,11 @@ func (s *Server) getIranWarCost(c *gin.Context) {
 		}
 	}
 
+	// 复用项目内翻译（Google → MyMemory），将时间线事件标题英→中
+	if len(out.Timeline) > 0 {
+		out.Timeline = translateTimelineTitles(out.Timeline)
+	}
+
 	go func(snapshot iranWarCostResp) {
 		if s.store == nil || s.store.DB == nil {
 			return
@@ -842,6 +848,29 @@ func stripHTMLTags(s string) string {
 	// 合并多余空白
 	ws := regexp.MustCompile(`\s+`)
 	return ws.ReplaceAllString(clean, " ")
+}
+
+// translateTimelineTitles 复用 collector.TranslateToChinese 将时间线事件标题英→中（同文去重缓存）
+func translateTimelineTitles(events []iranTimelineEvent) []iranTimelineEvent {
+	cache := make(map[string]string)
+	out := make([]iranTimelineEvent, len(events))
+	for i := range events {
+		out[i] = events[i]
+		title := strings.TrimSpace(events[i].Title)
+		if title == "" {
+			continue
+		}
+		if zh, ok := cache[title]; ok {
+			out[i].Title = zh
+			continue
+		}
+		zh := collector.TranslateToChinese(title)
+		if zh != "" {
+			cache[title] = zh
+			out[i].Title = zh
+		}
+	}
+	return out
 }
 
 // parseDollar 将 "$1,234,567" 格式字符串解析为 float64

@@ -159,49 +159,6 @@ export const IranWarChannel: React.FC = () => {
         </div>
       </section>
 
-      {/* 作战时间线与离散事件成本 */}
-      {timeline.length > 0 && (
-        <section className="section">
-          <h2 className="section-title">作战时间线与离散事件成本</h2>
-          <div className="iranwar-timeline">
-            <table className="iranwar-timeline-table">
-              <thead>
-                <tr>
-                  <th className="iranwar-tl-time">时间</th>
-                  <th className="iranwar-tl-event">事件</th>
-                  <th className="iranwar-tl-cost">成本</th>
-                </tr>
-              </thead>
-              <tbody>
-                {timeline.map((ev, idx) => (
-                  <tr key={idx}>
-                    <td className="iranwar-tl-time">{ev.time}</td>
-                    <td className="iranwar-tl-event">{ev.title}</td>
-                    <td className="iranwar-tl-cost">
-                      {ev.cost ? (
-                        <span className="iranwar-tl-cost-val">{ev.cost}</span>
-                      ) : (
-                        <span className="iranwar-tl-cost-na">--</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr className="iranwar-tl-total-row">
-                  <td colSpan={2} className="iranwar-tl-total-label">
-                    离散事件成本合计
-                  </td>
-                  <td className="iranwar-tl-cost">
-                    <span className="iranwar-tl-cost-val">{discreteDisplay}</span>
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        </section>
-      )}
-
       {/* 人员伤亡 */}
       <section className="section">
         <h2 className="section-title">人员伤亡</h2>
@@ -260,6 +217,49 @@ export const IranWarChannel: React.FC = () => {
           </div>
         </div>
       </section>
+
+      {/* 作战时间线与离散事件成本 */}
+      {timeline.length > 0 && (
+        <section className="section">
+          <h2 className="section-title">作战时间线与离散事件成本</h2>
+          <div className="iranwar-timeline">
+            <table className="iranwar-timeline-table">
+              <thead>
+                <tr>
+                  <th className="iranwar-tl-time">时间</th>
+                  <th className="iranwar-tl-event">事件</th>
+                  <th className="iranwar-tl-cost">成本</th>
+                </tr>
+              </thead>
+              <tbody>
+                {timeline.map((ev, idx) => (
+                  <tr key={idx}>
+                    <td className="iranwar-tl-time">{ev.time}</td>
+                    <td className="iranwar-tl-event">{ev.title}</td>
+                    <td className="iranwar-tl-cost">
+                      {ev.cost ? (
+                        <span className="iranwar-tl-cost-val">{ev.cost}</span>
+                      ) : (
+                        <span className="iranwar-tl-cost-na">未估算</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="iranwar-tl-total-row">
+                  <td colSpan={2} className="iranwar-tl-total-label">
+                    离散事件成本合计
+                  </td>
+                  <td className="iranwar-tl-cost">
+                    <span className="iranwar-tl-cost-val">{discreteDisplay}</span>
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </section>
+      )}
     </>
   );
 };
