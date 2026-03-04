@@ -7,12 +7,14 @@ import { AshareStocksManager } from "./AshareStocksManager";
 import { Calendar } from "./Calendar";
 import { WeatherCard } from "./WeatherCard";
 import { IranCostTicker } from "./IranCostTicker";
+import { IranWarChannel } from "./IranWarChannel";
 
 const CHANNELS = [
   { code: "github", label: "GitHub Trending", sources: ["github"] },
   { code: "baidu", label: "百度热搜", sources: ["baidu"] },
   { code: "hackernews", label: "Hacker News", sources: ["hackernews"] },
-  { code: "gold", label: "金融", sources: ["gold", "ashare"] }
+  { code: "gold", label: "金融", sources: ["gold", "ashare"] },
+  { code: "iranwar", label: "伊朗战争成本", sources: [] }
 ];
 
 const CHANNEL_CODES = CHANNELS.map((ch) => ch.code);
@@ -143,7 +145,7 @@ export const App: React.FC = () => {
 
   const channelGroups = useMemo(() => {
     if (!isHome) return [];
-    return CHANNELS.map((ch) => ({
+    return CHANNELS.filter((ch) => ch.code !== "iranwar").map((ch) => ({
       ...ch,
       items: items.filter((item) => ch.sources.includes(item.source))
     }));
@@ -359,6 +361,8 @@ export const App: React.FC = () => {
                 />
               </section>
             </>
+          ) : channel === "iranwar" ? (
+            <IranWarChannel />
           ) : (
             <section className="section">
               <h2 className="section-title">

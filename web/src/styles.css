@@ -606,6 +606,156 @@ body {
   color: var(--cursor-text);
 }
 
+/* 伊朗战争频道布局 */
+.iranwar-layout {
+  padding: 20px 24px 24px;
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 24px;
+}
+
+.iranwar-main-card {
+  border: 1px solid var(--cursor-border);
+  border-radius: var(--cursor-radius-lg);
+  background: var(--cursor-bg);
+  padding: 16px 18px 14px;
+}
+
+.iranwar-main-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.iranwar-main-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cursor-text);
+}
+
+.iranwar-source-link {
+  font-size: 12px;
+  color: var(--cursor-accent);
+  text-decoration: none;
+}
+
+.iranwar-source-link:hover {
+  text-decoration: underline;
+}
+
+.iranwar-main-total {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--cursor-accent);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 6px;
+}
+
+.iranwar-main-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.iranwar-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(234, 88, 12, 0.06);
+  color: var(--cursor-text-muted);
+}
+
+.iranwar-main-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--cursor-text-light);
+}
+
+.iranwar-rate-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.iranwar-rate-card {
+  border: 1px solid var(--cursor-border);
+  border-radius: var(--cursor-radius-lg);
+  background: var(--cursor-bg);
+  padding: 10px 12px;
+}
+
+.iranwar-rate-label {
+  font-size: 11px;
+  color: var(--cursor-text-light);
+}
+
+.iranwar-rate-value {
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  margin: 4px 0;
+}
+
+.iranwar-rate-tag {
+  font-size: 11px;
+  color: var(--cursor-text-muted);
+}
+
+.iranwar-human-grid {
+  padding: 16px 24px 24px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.iranwar-human-card {
+  border: 1px solid var(--cursor-border);
+  border-radius: var(--cursor-radius-lg);
+  background: #020617;
+  color: #e5e7eb;
+  padding: 14px 16px 12px;
+}
+
+.iranwar-human-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.iranwar-human-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.iranwar-human-number {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.iranwar-human-number-critical {
+  color: #f97316;
+}
+
+@media (max-width: 900px) {
+  .iranwar-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .iranwar-human-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .home-card {
   border: 1px solid var(--cursor-border);
   border-radius: var(--cursor-radius-lg);

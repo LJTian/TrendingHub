@@ -51,7 +51,17 @@ export interface WeatherItem {
 
 export interface IranWarCost {
   total: number;
+  opsTotal: number;
+  discreteTotal: number;
+  perSecond: number;
+  perHour: number;
+  perDay: number;
+  phase: string;
   currency: string;
   fetchedAt: string;
   sourceUrl: string;
+  usServiceMembersKilled?: string;
+  usWounded?: string;
+  iranMilitaryCasualties?: string;
+  iranCivilianCasualties?: string;
 }

@@ -535,11 +535,35 @@ func (s *Server) listNewsDates(c *gin.Context) {
 
 var iranCostNumberRe = regexp.MustCompile(`\$([0-9][0-9,]*)`)
 
+// 三阶段日成本模型（美元/天），源自 iran-cost-ticker.com 的 Methodology 说明：
+// initial strikes: ~380M/day (Days 0–3)
+// sustained operations: ~220M/day (Days 3–10)
+// air dominance / ISR-heavy: ~155M/day (Day 10+)
+const (
+	iranPhase1Rate = 380_000_000
+	iranPhase2Rate = 220_000_000
+	iranPhase3Rate = 155_000_000
+)
+
+var iranWarStart = time.Date(2026, 2, 28, 0, 0, 0, 0, time.UTC)
+
 type iranWarCostResp struct {
-	Total     float64   `json:"total"`
-	Currency  string    `json:"currency"`
-	FetchedAt time.Time `json:"fetchedAt"`
-	SourceURL string    `json:"sourceUrl"`
+	Total        float64   `json:"total"`
+	OpsTotal     float64   `json:"opsTotal"`
+	DiscreteTotal float64  `json:"discreteTotal"`
+	PerSecond    float64   `json:"perSecond"`
+	PerHour      float64   `json:"perHour"`
+	PerDay       float64   `json:"perDay"`
+	Phase        string    `json:"phase"`
+	Currency     string    `json:"currency"`
+	FetchedAt    time.Time `json:"fetchedAt"`
+	SourceURL    string    `json:"sourceUrl"`
+
+	// 人员伤亡（来自 Human Cost 区块）
+	USServiceMembersKilled   string `json:"usServiceMembersKilled"`
+	USWounded                string `json:"usWounded"`
+	IranMilitaryCasualties   string `json:"iranMilitaryCasualties"`
+	IranCivilianCasualties   string `json:"iranCivilianCasualties"`
 }
 
 func (s *Server) getIranWarCost(c *gin.Context) {
@@ -573,47 +597,113 @@ func (s *Server) getIranWarCost(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": "internal_error", "message": "failed to read upstream body"})
 		return
 	}
+	html := string(body)
 
-	total, err := extractIranWarCost(string(body))
-	if err != nil {
-		log.Printf("iran-cost: parse error: %v", err)
-		c.JSON(http.StatusBadGateway, gin.H{"code": "upstream_parse_error", "message": "failed to parse iran-cost-ticker.com"})
-		return
+	// 1）离散事件总成本：从 "TOTAL DISCRETE COSTS" 段解析；失败则使用页面当前示例 890,000,000 兜底
+	discreteTotal, derr := extractIranDiscreteTotal(html)
+	if derr != nil {
+		log.Printf("iran-cost: discrete total parse error: %v", derr)
+		discreteTotal = 890_000_000
 	}
 
+	// 2）基于官方 Methodology 的三阶段模型，按时间计算 opsTotal / liveTotal
+	now := time.Now().UTC()
+	if now.Before(iranWarStart) {
+		now = iranWarStart
+	}
+	days := now.Sub(iranWarStart).Hours() / 24
+	if days < 0 {
+		days = 0
+	}
+
+	var opsTotal float64
+	var dailyRate float64
+	var phase string
+
+	switch {
+	case days <= 3:
+		opsTotal = days * iranPhase1Rate
+		dailyRate = iranPhase1Rate
+		phase = "initial_strikes"
+	case days <= 10:
+		opsTotal = 3*iranPhase1Rate + (days-3)*iranPhase2Rate
+		dailyRate = iranPhase2Rate
+		phase = "sustained_operations"
+	default:
+		opsTotal = 3*iranPhase1Rate + 7*iranPhase2Rate + (days-10)*iranPhase3Rate
+		dailyRate = iranPhase3Rate
+		phase = "air_dominance_isr"
+	}
+
+	total := opsTotal + discreteTotal
+	perDay := dailyRate
+	perHour := dailyRate / 24
+	perSecond := dailyRate / (24 * 3600)
+
+	// 3）人员伤亡数字解析（Human Cost 区块），解析失败时字段留空字符串
+	usKilled, usWounded, iranMil, iranCiv := extractIranHumanCosts(html)
+
 	out := iranWarCostResp{
-		Total:     total,
-		Currency:  "USD",
-		FetchedAt: time.Now().UTC(),
-		SourceURL: "https://iran-cost-ticker.com/",
+		Total:        total,
+		OpsTotal:     opsTotal,
+		DiscreteTotal: discreteTotal,
+		PerSecond:    perSecond,
+		PerHour:      perHour,
+		PerDay:       perDay,
+		Phase:        phase,
+		Currency:     "USD",
+		FetchedAt:    now,
+		SourceURL:    "https://iran-cost-ticker.com/",
+
+		USServiceMembersKilled: usKilled,
+		USWounded:              usWounded,
+		IranMilitaryCasualties: iranMil,
+		IranCivilianCasualties: iranCiv,
 	}
 	c.JSON(http.StatusOK, gin.H{"code": "ok", "data": out})
 }
 
-// extractIranWarCost 从 iran-cost-ticker 页面 HTML 中解析「Operation Epic Fury — Est. U.S. Cost Since Strikes Began」对应的总成本数字。
-func extractIranWarCost(html string) (float64, error) {
-	const marker = "Operation Epic Fury — Est. U.S. Cost Since Strikes Began"
-	var segment string
-
-	if idx := strings.Index(html, marker); idx != -1 {
-		segment = html[idx:]
-		if len(segment) > 800 {
-			segment = segment[:800]
-		}
-	} else {
-		// 兜底：整个页面上搜索第一个金额
-		segment = html
+// extractIranDiscreteTotal 从 "TOTAL DISCRETE COSTS" 行附近提取总离散成本，例如 "$890,000,000"
+func extractIranDiscreteTotal(html string) (float64, error) {
+	const marker = "TOTAL DISCRETE COSTS"
+	idx := strings.Index(html, marker)
+	if idx == -1 {
+		return 0, errors.New("marker not found")
 	}
-
+	segment := html[idx:]
+	if len(segment) > 600 {
+		segment = segment[:600]
+	}
 	m := iranCostNumberRe.FindStringSubmatch(segment)
 	if m == nil {
-		return 0, errors.New("no cost number found")
+		return 0, errors.New("no dollar number found near total discrete costs")
 	}
-
 	raw := strings.ReplaceAll(m[1], ",", "")
 	val, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
 		return 0, fmt.Errorf("parse float from %q: %w", raw, err)
 	}
 	return val, nil
+}
+
+// extractIranHumanCosts 从 Human Cost 区块提取人员伤亡统计（字符串形式，保留 "+" 号等）
+func extractIranHumanCosts(html string) (usKilled, usWounded, iranMilitary, iranCivilian string) {
+	reUSKilled := regexp.MustCompile(`Service members killed[^0-9+]*([0-9+]+)`)
+	reUSWounded := regexp.MustCompile(`Wounded[^0-9+]*([0-9+]+)`)
+	reIranMil := regexp.MustCompile(`Military casualties\s*\(est\.\)[^0-9+]*([0-9+]+)`)
+	reIranCiv := regexp.MustCompile(`Civilian casualties\s*\(est\.\)[^0-9+]*([0-9+]+)`)
+
+	if m := reUSKilled.FindStringSubmatch(html); len(m) == 2 {
+		usKilled = m[1]
+	}
+	if m := reUSWounded.FindStringSubmatch(html); len(m) == 2 {
+		usWounded = m[1]
+	}
+	if m := reIranMil.FindStringSubmatch(html); len(m) == 2 {
+		iranMilitary = m[1]
+	}
+	if m := reIranCiv.FindStringSubmatch(html); len(m) == 2 {
+		iranCivilian = m[1]
+	}
+	return
 }
