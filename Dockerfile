@@ -18,12 +18,16 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /trendinghub ./cmd/api
 
-# Stage 3: 运行镜像
+# Stage 3: 运行镜像（含 Chromium 供 Iran War Cost 抓取）
 FROM ${BASE_REGISTRY}/library/alpine:3.20
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata \
+    chromium \
+    nss freetype harfbuzz ttf-freefont
 WORKDIR /app
 COPY --from=backend /trendinghub .
 COPY --from=frontend /app/web/dist ./web
+# chromedp 默认查找 google-chrome，Alpine 安装的是 chromium-browser
+RUN ln -sf /usr/bin/chromium-browser /usr/bin/google-chrome 2>/dev/null || ln -sf /usr/bin/chromium /usr/bin/google-chrome 2>/dev/null || true
 ENV APP_PORT=9000 \
     WEB_ROOT=/app/web
 EXPOSE 9000

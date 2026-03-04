@@ -8,6 +8,8 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -535,6 +537,14 @@ func (s *Server) listNewsDates(c *gin.Context) {
 
 var iranCostNumberRe = regexp.MustCompile(`\$([0-9][0-9,]+)`)
 
+// 三阶段日成本模型（美元/天），与 iran-cost-ticker.com 一致；回退时用于计算金额
+var (
+	iranWarStart   = time.Date(2026, 2, 28, 0, 0, 0, 0, time.UTC)
+	iranPhase1Rate = 380_000_000
+	iranPhase2Rate = 220_000_000
+	iranPhase3Rate = 155_000_000
+)
+
 type iranTimelineEvent struct {
 	Time        string `json:"time"`
 	Title       string `json:"title"`
@@ -589,8 +599,12 @@ func (s *Server) getIranWarCost(c *gin.Context) {
 	out, err := scrapeIranWarCost()
 	if err != nil {
 		log.Printf("iran-cost: scrape error: %v", err)
-		c.JSON(http.StatusBadGateway, gin.H{"code": "upstream_error", "message": "failed to scrape iran-cost-ticker.com: " + err.Error()})
-		return
+		// 无 Chrome 或 chromedp 失败时使用回退：HTTP 抓取 + 三阶段模型，至少返回金额与速率
+		out, err = fallbackScrapeIranWarCost()
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"code": "upstream_error", "message": "failed to scrape iran-cost-ticker.com: " + err.Error()})
+			return
+		}
 	}
 
 	go func(snapshot iranWarCostResp) {
@@ -622,16 +636,35 @@ func (s *Server) getIranWarCost(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": "ok", "data": out})
 }
 
+// findChromeExec 返回 Chrome/Chromium 可执行路径，供 Docker（Alpine）或本机使用
+func findChromeExec() string {
+	names := []string{"google-chrome", "google-chrome-stable", "chromium-browser", "chromium"}
+	for _, name := range names {
+		path, err := exec.LookPath(name)
+		if err == nil && path != "" {
+			return path
+		}
+	}
+	for _, path := range []string{"/usr/bin/chromium-browser", "/usr/bin/chromium", "/usr/bin/google-chrome-stable", "/usr/bin/google-chrome"} {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	return ""
+}
+
 // scrapeIranWarCost 使用 headless Chrome 渲染 iran-cost-ticker.com，等 JS 执行完毕后提取全部数据
 func scrapeIranWarCost() (*iranWarCostResp, error) {
-	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(),
-		append(chromedp.DefaultExecAllocatorOptions[:],
-			chromedp.Flag("headless", true),
-			chromedp.Flag("disable-gpu", true),
-			chromedp.Flag("no-sandbox", true),
-			chromedp.Flag("disable-dev-shm-usage", true),
-		)...,
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.Flag("headless", true),
+		chromedp.Flag("disable-gpu", true),
+		chromedp.Flag("no-sandbox", true),
+		chromedp.Flag("disable-dev-shm-usage", true),
 	)
+	if path := findChromeExec(); path != "" {
+		opts = append(opts, chromedp.ExecPath(path))
+	}
+	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), opts...)
 	defer allocCancel()
 
 	ctx, cancel := chromedp.NewContext(allocCtx)
@@ -688,6 +721,82 @@ func scrapeIranWarCost() (*iranWarCostResp, error) {
 	out.HumanCost = extractHumanCostFromText(text)
 
 	return out, nil
+}
+
+// fallbackScrapeIranWarCost 无 Chrome 时使用：HTTP 抓取 + 三阶段模型计算金额，Timeline/HumanCost 为空
+func fallbackScrapeIranWarCost() (*iranWarCostResp, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://iran-cost-ticker.com/", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "TrendingHubBot/1.0 (+github.com/LJTian/TrendingHub)")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("upstream status %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	text := stripHTMLTags(string(body))
+
+	discreteTotal := extractDollarNear(text, "TOTAL DISCRETE COSTS")
+	if discreteTotal <= 0 {
+		discreteTotal = 890_000_000
+	}
+
+	now := time.Now().UTC()
+	if now.Before(iranWarStart) {
+		now = iranWarStart
+	}
+	days := now.Sub(iranWarStart).Hours() / 24
+	if days < 0 {
+		days = 0
+	}
+
+	var opsTotal float64
+	var dailyRate float64
+	var phase string
+	switch {
+	case days <= 3:
+		opsTotal = days * float64(iranPhase1Rate)
+		dailyRate = float64(iranPhase1Rate)
+		phase = "initial_strikes"
+	case days <= 10:
+		opsTotal = 3*float64(iranPhase1Rate) + (days-3)*float64(iranPhase2Rate)
+		dailyRate = float64(iranPhase2Rate)
+		phase = "sustained_operations"
+	default:
+		opsTotal = 3*float64(iranPhase1Rate) + 7*float64(iranPhase2Rate) + (days-10)*float64(iranPhase3Rate)
+		dailyRate = float64(iranPhase3Rate)
+		phase = "air_dominance_isr"
+	}
+
+	total := opsTotal + discreteTotal
+	perDay := dailyRate
+	perHour := dailyRate / 24
+	perSecond := dailyRate / (24 * 3600)
+
+	return &iranWarCostResp{
+		Total:         total,
+		OpsTotal:      opsTotal,
+		DiscreteTotal: discreteTotal,
+		PerSecond:     perSecond,
+		PerHour:       perHour,
+		PerDay:        perDay,
+		Phase:         phase,
+		Currency:      "USD",
+		FetchedAt:     now,
+		SourceURL:     "https://iran-cost-ticker.com/",
+		Timeline:      nil,
+		HumanCost:     iranHumanCost{},
+	}, nil
 }
 
 // stripHTMLTags 简单地去除 HTML 标签，保留纯文本
