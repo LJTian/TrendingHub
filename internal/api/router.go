@@ -614,7 +614,8 @@ func (s *Server) getIranWarCost(c *gin.Context) {
 
 	if s.store.Redis != nil {
 		if bs, err := json.Marshal(out); err == nil {
-			_ = s.store.Redis.Set(context.Background(), cacheKey, bs, 60*time.Second).Err()
+			// 每 2 小时重新采集一次重数据；期间都直接使用缓存 + 前端本地 perSecond 外推做动画
+			_ = s.store.Redis.Set(context.Background(), cacheKey, bs, 2*time.Hour).Err()
 		}
 	}
 
