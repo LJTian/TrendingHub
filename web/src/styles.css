@@ -547,6 +547,65 @@ body {
   gap: 16px;
 }
 
+/* 伊朗战争成本卡片 */
+.iran-cost-card {
+  margin-bottom: 16px;
+}
+
+.iran-cost-body {
+  padding: 10px 16px 14px;
+}
+
+.iran-cost-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.iran-cost-label {
+  font-size: 12px;
+  color: var(--cursor-text-light);
+}
+
+.iran-cost-total {
+  font-size: 20px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--cursor-accent);
+}
+
+.iran-cost-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.iran-cost-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(234, 88, 12, 0.06);
+  color: var(--cursor-text-muted);
+}
+
+.iran-cost-phase {
+  background: rgba(15, 23, 42, 0.03);
+}
+
+.iran-cost-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--cursor-text-light);
+  line-height: 1.5;
+}
+
+.iran-cost-em {
+  font-weight: 600;
+  color: var(--cursor-text);
+}
+
 .home-card {
   border: 1px solid var(--cursor-border);
   border-radius: var(--cursor-radius-lg);

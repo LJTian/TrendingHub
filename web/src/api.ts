@@ -1,4 +1,4 @@
-import type { ApiResponse, NewsItem, WeatherItem } from "./types";
+import type { ApiResponse, NewsItem, WeatherItem, IranWarCost } from "./types";
 
 const BASE_URL = "";
 
@@ -76,6 +76,19 @@ export async function fetchAllWeather(): Promise<WeatherItem[]> {
   if (!res.ok) return [];
   const json = (await res.json()) as ApiResponse<WeatherItem[]>;
   return json.data ?? [];
+}
+
+/** 从后端抓取 Iran War Cost Tracker 抽取出的战争总成本估算 */
+export async function fetchIranWarCost(): Promise<IranWarCost | null> {
+  const res = await fetch(`${BASE_URL}/api/v1/iran-war-cost`);
+  if (!res.ok) {
+    return null;
+  }
+  const json = (await res.json()) as ApiResponse<IranWarCost>;
+  if (json.code !== "ok" || !json.data) {
+    return null;
+  }
+  return json.data;
 }
 
 /** 添加关注城市 */

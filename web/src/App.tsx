@@ -6,6 +6,7 @@ import { AshareBlock } from "./AshareBlock";
 import { AshareStocksManager } from "./AshareStocksManager";
 import { Calendar } from "./Calendar";
 import { WeatherCard } from "./WeatherCard";
+import { IranCostTicker } from "./IranCostTicker";
 
 const CHANNELS = [
   { code: "github", label: "GitHub Trending", sources: ["github"] },
@@ -229,6 +230,7 @@ export const App: React.FC = () => {
     <div className="home">
       <h2 className="home-title">今日热点总览</h2>
       <WeatherCard />
+      <IranCostTicker />
       <div className="home-grid">
         {channelGroups.map((group) => (
           <div key={group.code} className="home-card">

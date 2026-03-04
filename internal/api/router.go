@@ -3,11 +3,13 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -51,6 +53,8 @@ func (s *Server) RegisterRoutes(r *gin.Engine) {
 		v1.GET("/ashare/stocks", s.listAshareStocks)
 		v1.POST("/ashare/stocks", s.addAshareStock)
 		v1.DELETE("/ashare/stocks/:code", s.removeAshareStock)
+
+		v1.GET("/iran-war-cost", s.getIranWarCost)
 	}
 }
 
@@ -525,4 +529,91 @@ func (s *Server) listNewsDates(c *gin.Context) {
 		"message": "success",
 		"data":    dates,
 	})
+}
+
+// ========== Iran War Cost Tracker 抓取 ==========
+
+var iranCostNumberRe = regexp.MustCompile(`\$([0-9][0-9,]*)`)
+
+type iranWarCostResp struct {
+	Total     float64   `json:"total"`
+	Currency  string    `json:"currency"`
+	FetchedAt time.Time `json:"fetchedAt"`
+	SourceURL string    `json:"sourceUrl"`
+}
+
+func (s *Server) getIranWarCost(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://iran-cost-ticker.com/", nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "internal_error", "message": "failed to build request"})
+		return
+	}
+	req.Header.Set("User-Agent", "TrendingHubBot/1.0 (+github.com/LJTian/TrendingHub)")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		log.Printf("iran-cost: request error: %v", err)
+		c.JSON(http.StatusBadGateway, gin.H{"code": "upstream_error", "message": "failed to fetch iran-cost-ticker.com"})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		log.Printf("iran-cost: upstream status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		c.JSON(http.StatusBadGateway, gin.H{"code": "upstream_error", "message": "iran-cost-ticker.com returned non-200"})
+		return
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "internal_error", "message": "failed to read upstream body"})
+		return
+	}
+
+	total, err := extractIranWarCost(string(body))
+	if err != nil {
+		log.Printf("iran-cost: parse error: %v", err)
+		c.JSON(http.StatusBadGateway, gin.H{"code": "upstream_parse_error", "message": "failed to parse iran-cost-ticker.com"})
+		return
+	}
+
+	out := iranWarCostResp{
+		Total:     total,
+		Currency:  "USD",
+		FetchedAt: time.Now().UTC(),
+		SourceURL: "https://iran-cost-ticker.com/",
+	}
+	c.JSON(http.StatusOK, gin.H{"code": "ok", "data": out})
+}
+
+// extractIranWarCost 从 iran-cost-ticker 页面 HTML 中解析「Operation Epic Fury — Est. U.S. Cost Since Strikes Began」对应的总成本数字。
+func extractIranWarCost(html string) (float64, error) {
+	const marker = "Operation Epic Fury — Est. U.S. Cost Since Strikes Began"
+	var segment string
+
+	if idx := strings.Index(html, marker); idx != -1 {
+		segment = html[idx:]
+		if len(segment) > 800 {
+			segment = segment[:800]
+		}
+	} else {
+		// 兜底：整个页面上搜索第一个金额
+		segment = html
+	}
+
+	m := iranCostNumberRe.FindStringSubmatch(segment)
+	if m == nil {
+		return 0, errors.New("no cost number found")
+	}
+
+	raw := strings.ReplaceAll(m[1], ",", "")
+	val, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse float from %q: %w", raw, err)
+	}
+	return val, nil
 }

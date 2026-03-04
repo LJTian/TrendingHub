@@ -25,9 +25,7 @@ export interface WttrCondition {
   windspeedKmph: string;
   winddir16Point: string;
   uvIndex: string;
-}
-
-export interface WttrDay {
+}export interface WttrDay {
   date: string;
   maxtempC: string;
   mintempC: string;
@@ -51,3 +49,9 @@ export interface WeatherItem {
   weather: WttrResponse;
 }
 
+export interface IranWarCost {
+  total: number;
+  currency: string;
+  fetchedAt: string;
+  sourceUrl: string;
+}
