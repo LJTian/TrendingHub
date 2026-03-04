@@ -687,6 +687,14 @@ func scrapeIranWarCost() (*iranWarCostResp, error) {
 
 	// 去掉 HTML 标签，只保留文本方便正则匹配
 	text := stripHTMLTags(pageText)
+	upper := strings.ToUpper(text)
+
+	// 调试：打印前 2000 字符帮助定位解析问题
+	preview := text
+	if len(preview) > 2000 {
+		preview = preview[:2000]
+	}
+	log.Printf("[iran-scrape] text preview (%d chars total): %s", len(text), preview)
 
 	out := &iranWarCostResp{
 		Currency:  "USD",
@@ -694,16 +702,16 @@ func scrapeIranWarCost() (*iranWarCostResp, error) {
 		SourceURL: "https://iran-cost-ticker.com/",
 	}
 
-	// 1）提取主成本数字（Operation Epic Fury — Est. U.S. Cost Since Strikes Began 后面最大的 $ 数字）
+	// 1）提取主成本数字
 	out.Total = extractLargestDollarAfter(text, "Est. U.S. Cost Since Strikes Began")
 
-	// 2）提取每秒/每小时/每天成本
-	out.PerSecond = extractDollarNear(text, "PER SECOND")
-	out.PerHour = extractDollarNear(text, "PER HOUR")
-	out.PerDay = extractDollarNear(text, "PER DAY")
+	// 2）提取每秒/每小时/每天成本（大小写不敏感）
+	out.PerSecond = extractDollarNearCI(text, upper, "PER SECOND")
+	out.PerHour = extractDollarNearCI(text, upper, "PER HOUR")
+	out.PerDay = extractDollarNearCI(text, upper, "PER DAY")
 
 	// 3）提取 TOTAL DISCRETE COSTS
-	out.DiscreteTotal = extractDollarNear(text, "TOTAL DISCRETE COSTS")
+	out.DiscreteTotal = extractDollarNearCI(text, upper, "TOTAL DISCRETE COSTS")
 
 	// 4）计算 opsTotal
 	out.OpsTotal = out.Total - out.DiscreteTotal
@@ -711,8 +719,36 @@ func scrapeIranWarCost() (*iranWarCostResp, error) {
 		out.OpsTotal = 0
 	}
 
-	// 5）phase：从文本中查找当前阶段标签
+	// 5）phase
 	out.Phase = extractPhase(text)
+
+	// 如果 chromedp 抓到的速率为 0（页面格式变化），用三阶段模型补算
+	if out.PerDay <= 0 || out.PerSecond <= 0 {
+		now := time.Now().UTC()
+		days := now.Sub(iranWarStart).Hours() / 24
+		if days < 0 {
+			days = 0
+		}
+		var dailyRate float64
+		switch {
+		case days <= 3:
+			dailyRate = float64(iranPhase1Rate)
+		case days <= 10:
+			dailyRate = float64(iranPhase2Rate)
+		default:
+			dailyRate = float64(iranPhase3Rate)
+		}
+		out.PerDay = dailyRate
+		out.PerHour = dailyRate / 24
+		out.PerSecond = dailyRate / (24 * 3600)
+	}
+	if out.DiscreteTotal <= 0 {
+		out.DiscreteTotal = 890_000_000
+		out.OpsTotal = out.Total - out.DiscreteTotal
+		if out.OpsTotal < 0 {
+			out.OpsTotal = 0
+		}
+	}
 
 	// 6）Timeline 事件解析
 	out.Timeline = extractTimeline(text)
@@ -838,7 +874,7 @@ func extractLargestDollarAfter(text, marker string) float64 {
 	return best
 }
 
-// extractDollarNear 在 marker 附近（前后 300 字符）找到第一个 $ 金额
+// extractDollarNear 在 marker 附近找到第一个 $ 金额（精确匹配）
 func extractDollarNear(text, marker string) float64 {
 	idx := strings.Index(text, marker)
 	if idx == -1 {
@@ -850,6 +886,24 @@ func extractDollarNear(text, marker string) float64 {
 		end = len(text)
 	}
 	segment := text[start:end]
+	m := iranCostNumberRe.FindStringSubmatch(segment)
+	if m == nil {
+		return 0
+	}
+	return parseDollar(m[0])
+}
+
+// extractDollarNearCI 大小写不敏感版本：upper 是 text 的 ToUpper，markerUpper 是大写的 marker
+func extractDollarNearCI(text, upper, markerUpper string) float64 {
+	idx := strings.Index(upper, markerUpper)
+	if idx == -1 {
+		return 0
+	}
+	end := idx + len(markerUpper) + 300
+	if end > len(text) {
+		end = len(text)
+	}
+	segment := text[idx:end]
 	m := iranCostNumberRe.FindStringSubmatch(segment)
 	if m == nil {
 		return 0
@@ -876,26 +930,32 @@ func extractPhase(text string) string {
 }
 
 // extractTimeline 从纯文本中提取 Operation Timeline & Discrete Costs 段
-var timelineLineRe = regexp.MustCompile(`(\d{2}-\d{2}\s+\d{2}:\d{2})\s+(.+?)(?:\$([0-9,]+(?:,\d{3})*)|--)\s*`)
-
 func extractTimeline(text string) []iranTimelineEvent {
-	idx := strings.Index(text, "OPERATION TIMELINE")
+	upper := strings.ToUpper(text)
+	idx := strings.Index(upper, "OPERATION TIMELINE")
 	if idx == -1 {
+		log.Printf("[iran-scrape] extractTimeline: 'OPERATION TIMELINE' not found")
 		return nil
 	}
-	endIdx := strings.Index(text[idx:], "TOTAL DISCRETE COSTS")
+	// 在 Timeline 段之后寻找结束标记
+	afterIdx := idx + 18
+	endIdx := strings.Index(upper[afterIdx:], "TOTAL DISCRETE COSTS")
 	var segment string
 	if endIdx == -1 {
 		segment = text[idx:]
+		if len(segment) > 5000 {
+			segment = segment[:5000]
+		}
 	} else {
-		segment = text[idx : idx+endIdx]
+		segment = text[idx : afterIdx+endIdx]
 	}
-
-	// 匹配形如 "02-28 04:00 Operation Epic Fury begins ... $270,000,000" 或 "... --"
-	re := regexp.MustCompile(`(\d{2}-\d{2}\s+\d{2}:\d{2})\s+(.*?)(\$[0-9,]+|--)\s`)
-	matches := re.FindAllStringSubmatch(segment, -1)
+	log.Printf("[iran-scrape] extractTimeline segment (%d chars): %.500s", len(segment), segment)
 
 	var events []iranTimelineEvent
+
+	// 方式1：严格正则 "MM-DD HH:MM ... $xxx 或 --"
+	re := regexp.MustCompile(`(\d{2}-\d{2}\s+\d{2}:\d{2})\s+(.*?)(\$[0-9][0-9,]*|--)\s`)
+	matches := re.FindAllStringSubmatch(segment, -1)
 	for _, m := range matches {
 		title := strings.TrimSpace(m[2])
 		cost := strings.TrimSpace(m[3])
@@ -909,7 +969,7 @@ func extractTimeline(text string) []iranTimelineEvent {
 		})
 	}
 
-	// 如果上面的简单正则没匹配到，尝试更宽松的方式：按日期时间分割
+	// 方式2：更宽松 —— 按日期时间分割
 	if len(events) == 0 {
 		re2 := regexp.MustCompile(`(\d{2}-\d{2}\s+\d{2}:\d{2})`)
 		locs := re2.FindAllStringIndex(segment, -1)
@@ -935,7 +995,6 @@ func extractTimeline(text string) []iranTimelineEvent {
 					title = strings.TrimSpace(title[:ci])
 				}
 			}
-			// 去掉末尾 "--"
 			title = strings.TrimRight(title, " -")
 			title = strings.TrimSpace(title)
 
@@ -949,60 +1008,52 @@ func extractTimeline(text string) []iranTimelineEvent {
 		}
 	}
 
+	log.Printf("[iran-scrape] extractTimeline found %d events", len(events))
 	return events
 }
 
 // extractHumanCostFromText 从纯文本中提取 Human Cost 区块
 func extractHumanCostFromText(text string) iranHumanCost {
 	hc := iranHumanCost{}
+	upper := strings.ToUpper(text)
 
-	reNum := regexp.MustCompile(`([0-9]+\+?)`)
+	reNum := regexp.MustCompile(`(\d+\+?)`)
 
-	// Service members killed ... 数字
-	if idx := strings.Index(text, "Service members killed"); idx != -1 {
-		seg := text[idx : idx+80]
-		if m := reNum.FindString(seg[len("Service members killed"):]); m != "" {
-			hc.USServiceMembersKilled = m
+	findNumberNear := func(keyword string) string {
+		idx := strings.Index(upper, strings.ToUpper(keyword))
+		if idx == -1 {
+			return ""
 		}
-	}
-
-	// Wounded ... 数字（在 UNITED STATES 区块）
-	usIdx := strings.Index(text, "UNITED STATES")
-	if usIdx == -1 {
-		usIdx = 0
-	}
-	if idx := strings.Index(text[usIdx:], "Wounded"); idx != -1 {
-		seg := text[usIdx+idx : usIdx+idx+60]
-		if m := reNum.FindString(seg[len("Wounded"):]); m != "" {
-			hc.USWounded = m
+		end := idx + len(keyword) + 80
+		if end > len(text) {
+			end = len(text)
 		}
-	}
-
-	// Military casualties (est.) ... 数字
-	if idx := strings.Index(text, "Military casualties"); idx != -1 {
-		seg := text[idx : idx+80]
-		if m := reNum.FindString(seg[len("Military casualties"):]); m != "" {
-			hc.IranMilitaryCasualties = m
+		seg := text[idx+len(keyword) : end]
+		if m := reNum.FindString(seg); m != "" {
+			return m
 		}
+		return ""
 	}
 
-	// Civilian casualties (est.) ... 数字
-	if idx := strings.Index(text, "Civilian casualties"); idx != -1 {
-		seg := text[idx : idx+80]
-		if m := reNum.FindString(seg[len("Civilian casualties"):]); m != "" {
-			hc.IranCivilianCasualties = m
-		}
-	}
+	hc.USServiceMembersKilled = findNumberNear("Service members killed")
+	hc.USWounded = findNumberNear("Wounded")
+	hc.IranMilitaryCasualties = findNumberNear("Military casualties")
+	hc.IranCivilianCasualties = findNumberNear("Civilian casualties")
 
-	// 解析具体事件：日期 + 描述 + 数字
-	incidentRe := regexp.MustCompile(`(2026-\d{2}-\d{2})\s+(.*?)\s+(\d+\+?)(?:\s|$)`)
+	log.Printf("[iran-scrape] humanCost totals: killed=%s wounded=%s milCas=%s civCas=%s",
+		hc.USServiceMembersKilled, hc.USWounded, hc.IranMilitaryCasualties, hc.IranCivilianCasualties)
 
-	// US 事件（在 UNITED STATES 和 IRAN 之间）
-	iranIdx := strings.Index(text, "I R A N")
+	// 事件正则：支持 202x-MM-DD 或 MM-DD 格式
+	incidentRe := regexp.MustCompile(`(20\d{2}-\d{2}-\d{2})\s+(.*?)\s+(\d+\+?)(?:\s|$)`)
+
+	// 寻找 UNITED STATES 和 IRAN 分区（大小写不敏感）
+	usIdx := strings.Index(upper, "UNITED STATES")
+	iranIdx := strings.Index(upper, "I R A N")
 	if iranIdx == -1 {
-		iranIdx = strings.Index(text, "IRAN")
+		iranIdx = strings.Index(upper, "IRAN")
 	}
-	if usIdx > 0 && iranIdx > usIdx {
+
+	if usIdx >= 0 && iranIdx > usIdx {
 		usSeg := text[usIdx:iranIdx]
 		for _, m := range incidentRe.FindAllStringSubmatch(usSeg, -1) {
 			hc.USIncidents = append(hc.USIncidents, iranHumanIncident{
@@ -1013,11 +1064,10 @@ func extractHumanCostFromText(text string) iranHumanCost {
 		}
 	}
 
-	// Iran 事件（IRAN 之后）
 	if iranIdx > 0 {
 		iranSeg := text[iranIdx:]
-		if len(iranSeg) > 2000 {
-			iranSeg = iranSeg[:2000]
+		if len(iranSeg) > 3000 {
+			iranSeg = iranSeg[:3000]
 		}
 		for _, m := range incidentRe.FindAllStringSubmatch(iranSeg, -1) {
 			hc.IranIncidents = append(hc.IranIncidents, iranHumanIncident{

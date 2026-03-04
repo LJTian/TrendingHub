@@ -6,6 +6,13 @@ const usdFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0,
 });
 
+const phaseLabel: Record<string, string> = {
+  initial_strikes: "初始打击阶段",
+  sustained_operations: "持续作战阶段",
+  air_dominance_isr: "制空权 / 情报侦察监视阶段",
+  unknown: "未知阶段",
+};
+
 export const IranWarChannel: React.FC = () => {
   const [data, setData] = useState<IranWarCost | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -25,7 +32,7 @@ export const IranWarChannel: React.FC = () => {
         }
       } catch (e: any) {
         if (!cancelled) {
-          setError(e?.message || "获取 Iran War Cost Tracker 数据失败");
+          setError(e?.message || "获取伊朗战争成本数据失败");
         }
       } finally {
         if (!cancelled) {
@@ -65,7 +72,7 @@ export const IranWarChannel: React.FC = () => {
   }, [data?.total, data?.perSecond, data?.fetchedAt]);
 
   if (loading && !data) {
-    return <div className="status">正在从 Iran War Cost Tracker 抓取数据（首次加载需约 10 秒）...</div>;
+    return <div className="status">正在抓取伊朗战争成本数据（首次加载需约 10 秒）...</div>;
   }
 
   if (!loading && error && !data) {
@@ -73,7 +80,7 @@ export const IranWarChannel: React.FC = () => {
   }
 
   if (!data) {
-    return <div className="status">暂时没有可用数据</div>;
+    return <div className="status">暂无可用数据</div>;
   }
 
   const totalValue =
@@ -98,12 +105,12 @@ export const IranWarChannel: React.FC = () => {
     <>
       {/* 成本概览 */}
       <section className="section">
-        <h2 className="section-title">伊朗战争成本 · Operation Epic Fury</h2>
+        <h2 className="section-title">伊朗战争成本 · "史诗之怒"行动</h2>
         <div className="iranwar-layout">
           <div className="iranwar-main-card">
             <div className="iranwar-main-header">
               <span className="iranwar-main-title">
-                Operation Epic Fury — Est. U.S. Cost Since Strikes Began
+                "史诗之怒"行动 — 自开战以来美国估算总成本
               </span>
               <a
                 href="https://iran-cost-ticker.com/"
@@ -111,24 +118,24 @@ export const IranWarChannel: React.FC = () => {
                 rel="noreferrer"
                 className="iranwar-source-link"
               >
-                数据来源 · Iran War Cost Tracker →
+                数据来源 →
               </a>
             </div>
             <div className="iranwar-main-total">{totalDisplay}</div>
             <div className="iranwar-main-sub">
               <span className="iranwar-chip">
-                日成本（当前阶段）：${usdFormatter.format(data.perDay)}/day
+                日成本（当前阶段）：${usdFormatter.format(data.perDay)}/天
               </span>
               <span className="iranwar-chip">
-                作战成本小计：${usdFormatter.format(data.opsTotal)}
+                持续作战成本：${usdFormatter.format(data.opsTotal)}
               </span>
               <span className="iranwar-chip">
-                离散事件成本小计：{discreteDisplay}
+                离散事件成本：{discreteDisplay}
               </span>
             </div>
             <div className="iranwar-main-footer">
-              <span>当前阶段：{data.phase}</span>
-              <span>数据时间：{fetchedAtLocal}（服务器时间）</span>
+              <span>当前阶段：{phaseLabel[data.phase] ?? data.phase}</span>
+              <span>数据采集时间：{fetchedAtLocal}</span>
             </div>
           </div>
 
@@ -136,26 +143,26 @@ export const IranWarChannel: React.FC = () => {
             <div className="iranwar-rate-card">
               <div className="iranwar-rate-label">每秒成本</div>
               <div className="iranwar-rate-value">{perSecondDisplay}</div>
-              <div className="iranwar-rate-tag">Sustained Operations</div>
+              <div className="iranwar-rate-tag">持续作战阶段</div>
             </div>
             <div className="iranwar-rate-card">
               <div className="iranwar-rate-label">每小时成本</div>
               <div className="iranwar-rate-value">{perHourDisplay}</div>
-              <div className="iranwar-rate-tag">Sustained Operations</div>
+              <div className="iranwar-rate-tag">持续作战阶段</div>
             </div>
             <div className="iranwar-rate-card">
-              <div className="iranwar-rate-label">每天成本</div>
+              <div className="iranwar-rate-label">每日成本</div>
               <div className="iranwar-rate-value">{perDayDisplay}</div>
-              <div className="iranwar-rate-tag">Sustained Operations</div>
+              <div className="iranwar-rate-tag">持续作战阶段</div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Operation Timeline & Discrete Costs */}
+      {/* 作战时间线与离散事件成本 */}
       {timeline.length > 0 && (
         <section className="section">
-          <h2 className="section-title">Operation Timeline & Discrete Costs</h2>
+          <h2 className="section-title">作战时间线与离散事件成本</h2>
           <div className="iranwar-timeline">
             <table className="iranwar-timeline-table">
               <thead>
@@ -183,7 +190,7 @@ export const IranWarChannel: React.FC = () => {
               <tfoot>
                 <tr className="iranwar-tl-total-row">
                   <td colSpan={2} className="iranwar-tl-total-label">
-                    TOTAL DISCRETE COSTS
+                    离散事件成本合计
                   </td>
                   <td className="iranwar-tl-cost">
                     <span className="iranwar-tl-cost-val">{discreteDisplay}</span>
@@ -195,20 +202,20 @@ export const IranWarChannel: React.FC = () => {
         </section>
       )}
 
-      {/* Human Cost */}
+      {/* 人员伤亡 */}
       <section className="section">
-        <h2 className="section-title">Human Cost · 人员伤亡</h2>
+        <h2 className="section-title">人员伤亡</h2>
         <div className="iranwar-human-grid">
           <div className="iranwar-human-card">
-            <div className="iranwar-human-title">United States</div>
+            <div className="iranwar-human-title">美国</div>
             <div className="iranwar-human-row">
-              <span>Service members killed</span>
+              <span>军人阵亡</span>
               <span className="iranwar-human-number iranwar-human-number-critical">
                 {hc?.usServiceMembersKilled || "—"}
               </span>
             </div>
             <div className="iranwar-human-row">
-              <span>Wounded</span>
+              <span>受伤</span>
               <span className="iranwar-human-number">
                 {hc?.usWounded || "—"}
               </span>
@@ -226,15 +233,15 @@ export const IranWarChannel: React.FC = () => {
             )}
           </div>
           <div className="iranwar-human-card">
-            <div className="iranwar-human-title">Iran</div>
+            <div className="iranwar-human-title">伊朗</div>
             <div className="iranwar-human-row">
-              <span>Military casualties (est.)</span>
+              <span>军事人员伤亡（估计）</span>
               <span className="iranwar-human-number">
                 {hc?.iranMilitaryCasualties || "—"}
               </span>
             </div>
             <div className="iranwar-human-row">
-              <span>Civilian casualties (est.)</span>
+              <span>平民伤亡（估计）</span>
               <span className="iranwar-human-number iranwar-human-number-critical">
                 {hc?.iranCivilianCasualties || "—"}
               </span>

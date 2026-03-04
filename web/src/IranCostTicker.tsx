@@ -25,7 +25,7 @@ export const IranCostTicker: React.FC = () => {
         }
       } catch (e: any) {
         if (!cancelled) {
-          setError(e?.message || "获取 Iran War Cost Tracker 数据失败");
+          setError(e?.message || "获取伊朗战争成本数据失败");
         }
       } finally {
         if (!cancelled) {
@@ -35,7 +35,6 @@ export const IranCostTicker: React.FC = () => {
     };
 
     void load();
-    // 每分钟自动刷新一次
     const timer = setInterval(() => {
       void load();
     }, 60_000);
@@ -46,7 +45,6 @@ export const IranCostTicker: React.FC = () => {
     };
   }, []);
 
-  // 使用 perSecond 在前端做线性外推，让数值在两次刷新之间平滑增长
   useEffect(() => {
     if (!data || !Number.isFinite(data.total) || !Number.isFinite(data.perSecond)) {
       setDisplayTotal(null);
@@ -62,7 +60,6 @@ export const IranCostTicker: React.FC = () => {
     };
 
     update();
-    // 你选择了“每秒刷新一次”，这里采用 1s 更新节奏，既平滑又不刺眼
     const timer = setInterval(update, 1000);
     return () => clearInterval(timer);
   }, [data?.total, data?.perSecond, data?.fetchedAt]);
@@ -87,21 +84,21 @@ export const IranCostTicker: React.FC = () => {
           rel="noreferrer"
           className="home-card-more"
         >
-          数据来源 · Iran War Cost Tracker →
+          数据来源 →
         </a>
       </div>
       <div className="iran-cost-body">
         {loading && !data && (
           <div className="iran-cost-main">
             <span className="iran-cost-label">
-              正在从 Iran War Cost Tracker 抓取最新估算...
+              正在抓取伊朗战争成本最新估算...
             </span>
           </div>
         )}
         {!loading && error && !data && (
           <div className="iran-cost-main">
             <span className="iran-cost-label">
-              暂时无法获取 Iran War Cost Tracker 数据：{error}
+              暂时无法获取数据：{error}
             </span>
           </div>
         )}
@@ -109,20 +106,19 @@ export const IranCostTicker: React.FC = () => {
           <>
             <div className="iran-cost-main">
               <span className="iran-cost-label">
-                自 2026-02-28 以来的估算总成本
+                自 2026-02-28 以来美国估算总成本
               </span>
               <div className="iran-cost-total">{totalDisplay}</div>
             </div>
             <p className="iran-cost-note">
-              本卡片通过后端服务直接抓取{" "}
+              本卡片通过后端服务抓取{" "}
               <span className="iran-cost-em">Iran War Cost Tracker</span>{" "}
-              页面的「Operation Epic Fury — Est. U.S. Cost Since Strikes
-              Began」数值，并定期刷新展示。实际财政成本可能因更多隐性开支而更高。
+              页面的"史诗之怒"行动估算成本，每 2 小时采集一次并在前端实时外推。
+              实际财政成本可能更高。
             </p>
           </>
         )}
       </div>
     </div>
   );
-}
-
+};
