@@ -252,10 +252,10 @@ type qWeatherDailyResponse struct {
 }
 
 type wttrCondition struct {
-	TempC          string `json:"temp_C"`
-	FeelsLikeC     string `json:"FeelsLikeC"`
-	Humidity       string `json:"humidity"`
-	WeatherDesc    []struct {
+	TempC       string `json:"temp_C"`
+	FeelsLikeC  string `json:"FeelsLikeC"`
+	Humidity    string `json:"humidity"`
+	WeatherDesc []struct {
 		Value string `json:"value"`
 	} `json:"weatherDesc"`
 	WeatherCode    string `json:"weatherCode"`
@@ -265,9 +265,9 @@ type wttrCondition struct {
 }
 
 type wttrDay struct {
-	Date     string `json:"date"`
-	MaxtempC string `json:"maxtempC"`
-	MintempC string `json:"mintempC"`
+	Date      string `json:"date"`
+	MaxtempC  string `json:"maxtempC"`
+	MintempC  string `json:"mintempC"`
 	Astronomy []struct {
 		Sunrise string `json:"sunrise"`
 		Sunset  string `json:"sunset"`
@@ -377,11 +377,11 @@ func FetchWeatherFromQWeather(ctx context.Context, city, apiKey, apiHost string)
 		} `json:"areaName"`
 	}{
 		{
-				AreaName: []struct {
-					Value string `json:"value"`
-				}{
-					{Value: loc.Name},
-				},
+			AreaName: []struct {
+				Value string `json:"value"`
+			}{
+				{Value: loc.Name},
+			},
 		},
 	}
 

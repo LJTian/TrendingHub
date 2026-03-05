@@ -6,8 +6,8 @@ import (
 )
 
 type Config struct {
-	AppPort string
-	WebRoot string // 静态前端目录，非空时由 API 服务 SPA
+	AppPort     string
+	WebRoot     string // 静态前端目录，非空时由 API 服务 SPA
 	PostgresDSN string
 	RedisAddr   string
 	// QWeather 专属 API Host（形如 https://xxx.qweatherapi.com）
