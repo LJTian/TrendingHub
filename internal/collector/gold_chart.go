@@ -15,7 +15,9 @@ import (
 
 const goldMaxResponseBytes = 64 * 1024  // 64KB，黄金 API 响应很小
 const goldOzPerGram = 31.1034768        // 1 盎司 = 31.1034768 克，前端用 HotScore/此值得到元/克
-const eastMoneyGoldSecID = "113.888"    // 东方财富 沪金主连（上期所），备用数据源；与 ashare 共用 eastMoneyStockGetURL
+const eastMoneyGoldSecID = "113.888"    // 已废弃：qt/stock/get 对期货返回 data=null，改用 clist 拉列表
+const eastMoneyClistURL  = "https://push2.eastmoney.com/api/qt/clist/get" // 与指数/股票同源，期货用此列表接口
+const eastMoneyShfeFS    = "m:113"      // 上期所（113），不加 t:1 才能拉到沪金等品种
 
 var goldAllowedHosts = []string{"data-asg.goldprice.org", "data-goldprice.org"}
 
@@ -110,83 +112,100 @@ func (g *GoldPriceFetcher) fetchGoldFromURL(apiURL string) (*NewsItem, error) {
 	}, nil
 }
 
-// fetchGoldFromEastMoney 复用与 A 股相同的东方财富 push2 qt/stock/get 接口，拉取沪金主连（或 GOLD_EASTMONEY_SECID 指定合约）作为金价备用源。
-// 沪金报价一般为元/克，转为元/盎司存入 HotScore，与主源一致供前端 toPerGram 展示。
+// fetchGoldFromEastMoney 用东方财富 qt/clist/get 拉取上期所期货列表（与指数/股票同域名，接口不同），从列表中解析沪金主连/沪金合约价格。
+// 沪金报价为元/克，转为元/盎司存入 HotScore，与主源一致供前端 toPerGram 展示。
 func (g *GoldPriceFetcher) fetchGoldFromEastMoney() ([]NewsItem, error) {
-	secIDs := []string{os.Getenv("GOLD_EASTMONEY_SECID")}
-	if secIDs[0] == "" {
-		secIDs[0] = eastMoneyGoldSecID
-	}
-	// 若默认 113.888 返回 data=null，可尝试 116.888（上期所另一编码）
-	secIDs = append(secIDs, "116.888")
 	client := &http.Client{Timeout: 10 * time.Second}
-	for _, secID := range secIDs {
-		if secID == "" {
-			continue
-		}
-		item, ok := g.tryEastMoneySecID(client, secID)
-		if ok && item != nil {
-			return []NewsItem{*item}, nil
-		}
+	// fs=m:113 上期所；fields: f2=最新价(分) f3=涨跌幅 f12=代码 f14=名称 f60=昨收
+	params := url.Values{
+		"fs":     {eastMoneyShfeFS},
+		"fields": {"f2,f3,f12,f14,f60"},
+		"pn":     {"1"},
+		"pz":     {"100"},
 	}
-	return nil, nil
-}
-
-func (g *GoldPriceFetcher) tryEastMoneySecID(client *http.Client, secID string) (*NewsItem, bool) {
-	params := url.Values{"secid": {secID}, "fields": {"f43,f58,f60,f170"}}
-	u := eastMoneyStockGetURL + "?" + params.Encode()
+	u := eastMoneyClistURL + "?" + params.Encode()
 	req, err := http.NewRequest(http.MethodGet, u, nil)
 	if err != nil {
-		return nil, false
+		return nil, err
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 	req.Header.Set("Referer", "https://quote.eastmoney.com/")
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("fetch gold from East Money (secid=%s): %v", secID, err)
-		return nil, false
+		log.Printf("fetch gold from East Money clist: %v", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
 	if err != nil {
-		return nil, false
+		return nil, err
 	}
+	// 接口返回的 diff 是对象 {"0":{...},"1":{...}} 不是数组
 	var payload struct {
 		Data *struct {
-			F43  float64 `json:"f43"`
-			F58  string  `json:"f58"`
-			F60  float64 `json:"f60"`
-			F170 float64 `json:"f170"`
+			Diff map[string]struct {
+				F2  float64 `json:"f2"`  // 最新价（单位：分，需/100 得元/克）
+				F3  float64 `json:"f3"`  // 涨跌幅
+				F12 string  `json:"f12"` // 代码
+				F14 string  `json:"f14"` // 名称
+				F60 float64 `json:"f60"` // 昨收
+			} `json:"diff"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		log.Printf("gold East Money (secid=%s): json decode error: %v", secID, err)
-		return nil, false
+		log.Printf("gold East Money clist decode: %v", err)
+		return nil, nil
 	}
-	if payload.Data == nil {
-		preview := string(body)
-		if len(preview) > 400 {
-			preview = preview[:400] + "..."
+	if payload.Data == nil || len(payload.Data.Diff) == 0 {
+		log.Printf("gold East Money clist: data or diff empty")
+		return nil, nil
+	}
+	// 在列表中找沪金：优先名称含「沪金主连」或「沪金连续」，否则任意「沪金」
+	type diffRow struct {
+		F2  float64
+		F3  float64
+		F12 string
+		F14 string
+		F60 float64
+	}
+	var chosen *diffRow
+	for _, d := range payload.Data.Diff {
+		if !strings.Contains(d.F14, "沪金") {
+			continue
 		}
-		log.Printf("gold East Money (secid=%s): data is null, status=%d, body: %s", secID, resp.StatusCode, preview)
-		return nil, false
+		row := diffRow{d.F2, d.F3, d.F12, d.F14, d.F60}
+		if chosen == nil {
+			chosen = &row
+		}
+		if strings.Contains(d.F14, "主连") || strings.Contains(d.F14, "连续") {
+			chosen = &row
+			break
+		}
 	}
-	d := payload.Data
-	pricePerGram := d.F43
+	if chosen == nil {
+		log.Printf("gold East Money clist: no 沪金 in list")
+		return nil, nil
+	}
+	// 接口 f2 为「分」，除以 100 得元/克（沪金约 500～600 元/克，f2 约 5～6 万）
+	pricePerGram := chosen.F2
 	if pricePerGram > 10000 {
 		pricePerGram = pricePerGram / 100
 	}
+	if pricePerGram <= 0 {
+		return nil, nil
+	}
 	pricePerOz := pricePerGram * goldOzPerGram
 	now := time.Now()
-	name := d.F58
+	name := chosen.F14
 	if name == "" {
 		name = "沪金主连"
 	}
-	itemURL := "https://quote.eastmoney.com/qihuo/au.html?t=" + strconv.FormatInt(now.UnixMilli(), 10)
-	pct := d.F170 / 100
+	// f3 与股票 f170 一致，为涨跌幅百分比×100
+	pct := chosen.F3 / 100
 	changeStr := strconv.FormatFloat(pct, 'f', 2, 64)
-	log.Printf("gold price fallback: using East Money 沪金 (secid=%s), %.2f 元/克", secID, pricePerGram)
-	return &NewsItem{
+	itemURL := "https://quote.eastmoney.com/qihuo/au.html?t=" + strconv.FormatInt(now.UnixMilli(), 10)
+	log.Printf("gold price fallback: using East Money 沪金 (%s), %.2f 元/克", name, pricePerGram)
+	return []NewsItem{{
 		Title:       "黄金价格（XAU/人民币）",
 		URL:         itemURL,
 		Source:      "gold",
@@ -194,7 +213,7 @@ func (g *GoldPriceFetcher) tryEastMoneySecID(client *http.Client, secID string) 
 		PublishedAt: now,
 		HotScore:    pricePerOz,
 		RawData:     map[string]any{"price": pricePerOz, "ts": now.UnixMilli(), "source": "eastmoney"},
-	}, true
+	}}, nil
 }
 
 func isAllowedGoldAPIURL(raw string) bool {
