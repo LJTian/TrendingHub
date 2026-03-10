@@ -1,0 +1,18 @@
+channels:
+  # 各频道是否启用（留空则使用内置默认值）
+  baidu_hot: true
+  gold_price: true
+  ashare: true
+  hackernews: true
+  github_trending: true
+  # 伊朗战争成本相关频道（API + 前端），默认关闭；如需启用请显式改为 true
+  iran_war_cost: false
+
+cron:
+  # 抓取周期，标准 cron 表达式（与 robfig/cron v3 兼容）
+  baidu_hot: "*/30 * * * *"       # 百度热搜：每 30 分钟
+  gold_price: "*/30 * * * *"      # 黄金价格：每 30 分钟
+  ashare: "*/3 * * * *"           # A 股指数 + 自选股：每 3 分钟
+  hackernews: "0 * * * *"         # Hacker News：每小时
+  github_trending: "0 */2 * * *"  # GitHub Trending：每 2 小时
+

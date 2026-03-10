@@ -49,12 +49,23 @@ func main() {
 	go refreshWeather(store, cfg.QWeatherAPIKey, cfg.QWeatherAPIHost)
 
 	// 按数据源更新频率配置独立的采集周期；A 股自选股从数据库读取
-	jobs := []scheduler.FetcherJob{
-		{Fetcher: &collector.BaiduHotFetcher{}, CronSpec: "*/30 * * * *"},
-		{Fetcher: &collector.GoldPriceFetcher{}, CronSpec: "*/30 * * * *"},
+	var jobs []scheduler.FetcherJob
+	if cfg.EnableBaiduHot {
+		jobs = append(jobs, scheduler.FetcherJob{
+			Fetcher:  &collector.BaiduHotFetcher{},
+			CronSpec: cfg.BaiduHotCron,
+		})
+	}
+	if cfg.EnableGoldPrice {
+		jobs = append(jobs, scheduler.FetcherJob{
+			Fetcher:  &collector.GoldPriceFetcher{},
+			CronSpec: cfg.GoldPriceCron,
+		})
+	}
+	if cfg.EnableAshare {
 		// A 股指数 + 自选股：提高频率到每 3 分钟一次，以获得更平滑的分时折线；
 		// 收盘后仅在“当天尚无任何 A 股数据”时允许再拉一次，用当前价回填当天快照。
-		{
+		jobs = append(jobs, scheduler.FetcherJob{
 			Fetcher: &collector.AShareIndexFetcher{
 				GetStockCodes: func() []string { return store.ListAShareStockCodes() },
 				HasTodayData: func(now time.Time) bool {
@@ -64,10 +75,20 @@ func main() {
 					return store.HasAshareDataForDate(date)
 				},
 			},
-			CronSpec: "*/3 * * * *",
-		},
-		{Fetcher: &collector.HackerNewsFetcher{}, CronSpec: "0 * * * *"},
-		{Fetcher: &collector.GitHubTrendingMock{}, CronSpec: "0 */2 * * *"},
+			CronSpec: cfg.AshareCron,
+		})
+	}
+	if cfg.EnableHackerNews {
+		jobs = append(jobs, scheduler.FetcherJob{
+			Fetcher:  &collector.HackerNewsFetcher{},
+			CronSpec: cfg.HackerNewsCron,
+		})
+	}
+	if cfg.EnableGitHubTrending {
+		jobs = append(jobs, scheduler.FetcherJob{
+			Fetcher:  &collector.GitHubTrendingMock{},
+			CronSpec: cfg.GitHubTrendingCron,
+		})
 	}
 
 	p := processor.NewSimpleProcessor()

@@ -27,16 +27,18 @@ var httpClient = &http.Client{
 }
 
 type Server struct {
-	store          *storage.Store
-	qWeatherHost   string
-	qWeatherAPIKey string
+	store             *storage.Store
+	qWeatherHost      string
+	qWeatherAPIKey    string
+	enableIranWarCost bool
 }
 
 func NewServer(store *storage.Store, cfg *config.Config) *Server {
 	return &Server{
-		store:          store,
-		qWeatherHost:   cfg.QWeatherAPIHost,
-		qWeatherAPIKey: cfg.QWeatherAPIKey,
+		store:             store,
+		qWeatherHost:      cfg.QWeatherAPIHost,
+		qWeatherAPIKey:    cfg.QWeatherAPIKey,
+		enableIranWarCost: cfg.EnableIranWarCost,
 	}
 }
 
@@ -584,6 +586,14 @@ type iranWarCostResp struct {
 }
 
 func (s *Server) getIranWarCost(c *gin.Context) {
+	if !s.enableIranWarCost {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"code":    "disabled",
+			"message": "iran war cost channel is temporarily disabled",
+		})
+		return
+	}
+
 	ctx := c.Request.Context()
 
 	cacheKey := "iranwar:latest"
