@@ -18,6 +18,9 @@ web/.vite/
 web/.turbo/
 web/.eslintcache
 
+# Local git worktrees
+.worktrees/
+
 # Env / local config
 *.env
 *.local
