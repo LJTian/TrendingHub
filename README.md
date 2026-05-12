@@ -1,6 +1,6 @@
 # TrendingHub
 
-多源热点聚合服务 —— 统一抓取 GitHub Trending、百度热搜、Hacker News、金融行情、伊朗战争实时成本等热门数据，并提供天气预报，通过 Web 界面一站式浏览。
+多源热点聚合服务 —— 统一抓取 GitHub Trending、Product Hunt、百度热搜、Hacker News、金融行情、伊朗战争实时成本等热门数据，并提供天气预报，通过 Web 界面一站式浏览。
 
 ![TrendingHub 首页截图](image.png)
 
@@ -10,6 +10,7 @@
 |------|------|
 | **首页仪表板** | 总览所有频道的热门内容、天气卡片、伊朗战争成本滚动条，一屏掌握全局 |
 | **GitHub Trending** | 抓取 GitHub 每日热门仓库，非中文描述自动翻译为中文 |
+| **Product Hunt** | 独立频道展示 Product Hunt 热门产品，支持关键词搜索与标签筛选；默认使用公开 RSS，配置 `PRODUCTHUNT_API_TOKEN` 后可优先走官方 GraphQL |
 | **百度热搜** | 实时获取百度热搜榜单 |
 | **Hacker News** | 抓取 Hacker News 热门文章，标题自动翻译为中文 |
 | **金融行情** | 黄金价格走势（元/克）；A 股三大指数（上证、深证、创业板）置顶；自选股通过环境变量 `ASHARE_STOCK_CODES` 配置 |
@@ -39,6 +40,7 @@ internal/
     router.go               全部路由注册 + 天气代理 + 伊朗战争成本抓取
   collector/              各数据源采集器
     github_mock.go          GitHub Trending
+    producthunt.go          Product Hunt
     baidu_hot.go            百度热搜
     hackernews.go           Hacker News
     gold_chart.go           黄金价格
@@ -121,6 +123,7 @@ npm run dev
 | `REDIS_ADDR` | 否 | `localhost:6380` | Redis 地址 |
 | `QWEATHER_API_HOST` | 否 | — | 和风天气 API Host |
 | `QWEATHER_API_KEY` | 否 | — | 和风天气 API Key |
+| `PRODUCTHUNT_API_TOKEN` | 否 | — | Product Hunt 官方 GraphQL Token；未配置时回退到公开 RSS feed |
 | `ASHARE_STOCK_CODES` | 否 | — | A 股自选股代码，逗号分隔（如 `600519,000858`） |
 | `APP_BASIC_USER` | 否 | — | 全站 Basic Auth 用户名 |
 | `APP_BASIC_PASS` | 否 | — | 全站 Basic Auth 密码 |
@@ -131,6 +134,7 @@ npm run dev
 | 数据源 | 周期 |
 |--------|------|
 | 百度热搜 | 每 30 分钟 |
+| Product Hunt | 每 30 分钟 |
 | 黄金价格 | 每 30 分钟 |
 | A 股指数 | 每 3 分钟 |
 | Hacker News | 每小时 |
@@ -143,7 +147,7 @@ npm run dev
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/health` | 健康检查 |
-| GET | `/api/v1/news` | 新闻列表（参数：`channel`、`sort`、`limit`、`date`） |
+| GET | `/api/v1/news` | 新闻列表（参数：`channel`、`sort`、`limit`、`date`、`q`、`tag`） |
 | GET | `/api/v1/news/dates` | 有数据的日期列表 |
 | GET | `/api/v1/weather` | 所有关注城市的天气缓存 |
 | GET | `/api/v1/weather/cities` | 天气城市列表 |
@@ -155,6 +159,8 @@ npm run dev
 
 ```bash
 curl "http://localhost:9000/api/v1/news?channel=github&sort=hot&limit=10"
+curl "http://localhost:9000/api/v1/news?channel=producthunt&sort=hot&limit=10"
+curl "http://localhost:9000/api/v1/news?channel=producthunt&q=cursor"
 curl "http://localhost:9000/api/v1/weather"
 curl "http://localhost:9000/api/v1/iran-war-cost"
 ```
@@ -214,6 +220,7 @@ make frontend-build # 仅前端构建
 
 - GitHub Trending 页面结构可能变化，解析逻辑属于"尽力而为"的实现
 - 非中文内容（GitHub 描述、Hacker News 标题、伊朗战争时间线）自动翻译为中文，优先 Google 翻译，失败时回退 MyMemory
+- Product Hunt 默认走公开 RSS feed；如果配置了 `PRODUCTHUNT_API_TOKEN`，会优先使用官方 GraphQL 拉取热门产品和 topics
 - 天气数据来源于 QWeather 和风天气，需申请免费开发者 Key 并配置 `QWEATHER_API_KEY` 与 `QWEATHER_API_HOST`
 - 伊朗战争成本抓取依赖 Chromium，Docker 镜像已内置；本地开发需系统安装 Chrome 或 Chromium
 - X 热搜因外部数据源不稳定暂未接入，采集器代码保留在 `internal/collector/x_trends.go`

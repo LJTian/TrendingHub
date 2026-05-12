@@ -43,3 +43,14 @@ func TestLoadReadsAuthAndPorts(t *testing.T) {
 	}
 }
 
+func TestLoadEnablesProductHuntByDefault(t *testing.T) {
+	_ = os.Unsetenv("PRODUCTHUNT_API_TOKEN")
+
+	cfg := Load()
+	if !cfg.EnableProductHunt {
+		t.Fatalf("EnableProductHunt = false, want true")
+	}
+	if cfg.ProductHuntCron == "" {
+		t.Fatalf("ProductHuntCron should have a default value")
+	}
+}

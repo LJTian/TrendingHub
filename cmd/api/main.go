@@ -39,6 +39,9 @@ func main() {
 	if _, err := store.EnsureChannel("hackernews", "Hacker News", "https://news.ycombinator.com"); err != nil {
 		log.Fatalf("ensure channel hackernews failed: %v", err)
 	}
+	if _, err := store.EnsureChannel("producthunt", "Product Hunt", "https://www.producthunt.com/"); err != nil {
+		log.Fatalf("ensure channel producthunt failed: %v", err)
+	}
 
 	// 确保默认城市"北京"存在
 	if err := store.AddWeatherCity("北京"); err != nil {
@@ -88,6 +91,14 @@ func main() {
 		jobs = append(jobs, scheduler.FetcherJob{
 			Fetcher:  &collector.GitHubTrendingMock{},
 			CronSpec: cfg.GitHubTrendingCron,
+		})
+	}
+	if cfg.EnableProductHunt {
+		jobs = append(jobs, scheduler.FetcherJob{
+			Fetcher: &collector.ProductHuntFetcher{
+				APIToken: cfg.ProductHuntAPIToken,
+			},
+			CronSpec: cfg.ProductHuntCron,
 		})
 	}
 

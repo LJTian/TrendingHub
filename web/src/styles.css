@@ -1060,6 +1060,70 @@ body {
   border-bottom: 1px solid var(--cursor-border);
 }
 
+.producthunt-search {
+  padding-bottom: 8px;
+}
+
+.producthunt-search-row {
+  display: flex;
+  gap: 8px;
+  padding: 16px 24px 10px;
+}
+
+.producthunt-search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--cursor-border-strong);
+  border-radius: var(--cursor-radius);
+  background: var(--cursor-surface);
+  color: var(--cursor-text);
+  font-size: 14px;
+}
+
+.producthunt-search-input:focus {
+  outline: none;
+  border-color: var(--cursor-accent);
+}
+
+.producthunt-search-clear {
+  border: 1px solid var(--cursor-border-strong);
+  background: var(--cursor-bg);
+  color: var(--cursor-text-muted);
+  border-radius: var(--cursor-radius);
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.producthunt-search-clear:hover {
+  color: var(--cursor-accent);
+  background: rgba(234, 88, 12, 0.06);
+}
+
+.producthunt-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 24px 12px;
+}
+
+.producthunt-tag {
+  border: 1px solid var(--cursor-border-strong);
+  background: var(--cursor-bg);
+  color: var(--cursor-text-muted);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.producthunt-tag.active {
+  color: var(--cursor-accent);
+  border-color: var(--cursor-accent);
+  background: rgba(234, 88, 12, 0.08);
+}
+
 .status {
   padding: 32px 24px;
   text-align: center;

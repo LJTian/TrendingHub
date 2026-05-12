@@ -479,6 +479,8 @@ func (s *Server) listNews(c *gin.Context) {
 			return
 		}
 	}
+	q := c.Query("q")
+	tag := c.Query("tag")
 
 	limitStr := c.DefaultQuery("limit", "20")
 	limit, err := strconv.Atoi(limitStr)
@@ -493,7 +495,7 @@ func (s *Server) listNews(c *gin.Context) {
 		limit = maxLimit
 	}
 
-	items, err := s.store.ListNews(channel, sort, limit, date)
+	items, err := s.store.ListNews(channel, sort, limit, date, q, tag)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    "internal_error",

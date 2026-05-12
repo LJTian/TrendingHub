@@ -7,12 +7,16 @@ export async function fetchNews(params: {
   sort?: "latest" | "hot";
   limit?: number;
   date?: string; // 可选，YYYY-MM-DD，按日期展示
+  q?: string;
+  tag?: string;
 }): Promise<NewsItem[]> {
   const search = new URLSearchParams();
   if (params.channel) search.set("channel", params.channel);
   if (params.sort) search.set("sort", params.sort);
   if (params.limit) search.set("limit", String(params.limit));
   if (params.date) search.set("date", params.date);
+  if (params.q) search.set("q", params.q);
+  if (params.tag) search.set("tag", params.tag);
 
   const res = await fetch(`${BASE_URL}/api/v1/news?${search.toString()}`);
   const contentType = res.headers.get("content-type") ?? "";

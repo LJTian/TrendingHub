@@ -11,6 +11,7 @@ const CHANNELS = [
   { code: "github", label: "GitHub Trending", sources: ["github"] },
   { code: "baidu", label: "百度热搜", sources: ["baidu"] },
   { code: "hackernews", label: "Hacker News", sources: ["hackernews"] },
+  { code: "producthunt", label: "Product Hunt", sources: ["producthunt"] },
   { code: "gold", label: "金融", sources: ["gold", "ashare"] }
 ];
 
@@ -64,6 +65,8 @@ export const App: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [items, setItems] = useState<NewsItem[]>([]);
+  const [query, setQuery] = useState("");
+  const [tag, setTag] = useState("");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -105,11 +108,14 @@ export const App: React.FC = () => {
         setItems(results.flat());
       } else {
         const isGold = channel === "gold";
+        const isProductHunt = channel === "producthunt";
         const data = await fetchNews({
           channel,
           sort: "hot",
           limit: isGold ? 500 : 30,
-          date: date || undefined
+          date: date || undefined,
+          q: isProductHunt ? query || undefined : undefined,
+          tag: isProductHunt ? tag || undefined : undefined
         });
         setItems(data);
       }
@@ -123,7 +129,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channel, date]);
+  }, [channel, date, query, tag]);
 
   useEffect(() => {
     fetchNewsDates({ channel: channel || undefined, limit: 31 })
@@ -277,6 +283,58 @@ export const App: React.FC = () => {
     </div>
   );
 
+  const productHuntTags = useMemo(() => {
+    const tags = new Set<string>();
+    for (const item of items) {
+      const rawTopics = item.extraData?.topics;
+      if (!Array.isArray(rawTopics)) continue;
+      for (const topic of rawTopics) {
+        if (typeof topic === "string" && topic.trim() !== "") {
+          tags.add(topic.trim());
+        }
+      }
+    }
+    return Array.from(tags).slice(0, 8);
+  }, [items]);
+
+  const renderProductHuntSearch = () => (
+    <div className="section producthunt-search">
+      <h2 className="section-title">搜索 Product Hunt</h2>
+      <div className="producthunt-search-row">
+        <input
+          className="producthunt-search-input"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="输入关键词搜索标题或简介"
+        />
+        <button
+          type="button"
+          className="producthunt-search-clear"
+          onClick={() => {
+            setQuery("");
+            setTag("");
+          }}
+        >
+          清空
+        </button>
+      </div>
+      {productHuntTags.length > 0 && (
+        <div className="producthunt-tags">
+          {productHuntTags.map((itemTag) => (
+            <button
+              type="button"
+              key={itemTag}
+              className={`producthunt-tag ${tag === itemTag ? "active" : ""}`}
+              onClick={() => setTag(itemTag === tag ? "" : itemTag)}
+            >
+              {itemTag}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="page">
       <aside className="sidebar">
@@ -355,6 +413,61 @@ export const App: React.FC = () => {
                       !["上证指数", "深证成指", "创业板指"].includes(i.title)
                   )}
                 />
+              </section>
+            </>
+          ) : channel === "producthunt" ? (
+            <>
+              {renderProductHuntSearch()}
+              <section className="section">
+                <h2 className="section-title">Product Hunt 热门</h2>
+                <ul className="list">
+                  {items.map((item, index) => (
+                    <li key={item.id} className="card">
+                      <div className="card-header">
+                        <span className="rank">{index + 1}</span>
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="title"
+                        >
+                          {item.title}
+                        </a>
+                      </div>
+                      <div className="card-meta">
+                        <span className="badge">{item.source}</span>
+                        <span className="dot" />
+                        <span>热度 {Math.round(item.hotScore)}</span>
+                        <span className="dot" />
+                        <span>
+                          {new Date(item.publishedAt).toLocaleString("zh-CN", {
+                            hour12: false
+                          })}
+                        </span>
+                      </div>
+                      <div className="card-tooltip" role="tooltip">
+                        <div className="card-tooltip-title">详细信息</div>
+                        <div className="card-tooltip-body">
+                          <div className="card-tooltip-main">
+                            {truncateText(
+                              item.description || item.title || "暂无介绍",
+                              600
+                            )}
+                          </div>
+                          <div className="card-tooltip-extra">
+                            <p>
+                              来源：{item.source} · 热度：
+                              {Math.round(item.hotScore)} · 发布时间：
+                              {new Date(item.publishedAt).toLocaleString("zh-CN", {
+                                hour12: false
+                              })}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
               </section>
             </>
           ) : (

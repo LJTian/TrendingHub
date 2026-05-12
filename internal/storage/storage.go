@@ -19,10 +19,10 @@ import (
 
 // 各频道对应独立表名，写入/查询均按 source 路由到对应表
 var (
-	allowedSources = []string{"github", "baidu", "gold", "ashare", "x", "hackernews"}
+	allowedSources = []string{"github", "baidu", "gold", "ashare", "x", "hackernews", "producthunt"}
 	sourceToTable  = map[string]string{
 		"github": "news_github", "baidu": "news_baidu", "gold": "news_gold",
-		"ashare": "news_ashare", "x": "news_x", "hackernews": "news_hackernews",
+		"ashare": "news_ashare", "x": "news_x", "hackernews": "news_hackernews", "producthunt": "news_producthunt",
 	}
 )
 
@@ -242,11 +242,29 @@ func (s *Store) SaveBatch(items []processor.ProcessedNews) error {
 	return nil
 }
 
-// ListNews 按渠道、排序与可选日期返回新闻列表，并使用 Redis 做简单缓存
+func newsSearchClause(q string) (string, []any) {
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return "", nil
+	}
+	pattern := "%" + q + "%"
+	return "(title ILIKE ? OR description ILIKE ? OR CAST(extra_data AS TEXT) ILIKE ?)", []any{pattern, pattern, pattern}
+}
+
+func newsTagClause(tag string) (string, []any) {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return "", nil
+	}
+	pattern := "%" + tag + "%"
+	return "(COALESCE(extra_data->'topics', '[]'::jsonb)::text ILIKE ?)", []any{pattern}
+}
+
+// ListNews 按渠道、排序与可选日期/关键词/标签返回新闻列表，并使用 Redis 做简单缓存
 // channel: 渠道 code，可为空
 // sort: latest(默认) / hot
 // date: 可选，格式 2006-01-02，指定则只返回该日期的数据
-func (s *Store) ListNews(channel, sort string, limit int, date string) ([]News, error) {
+func (s *Store) ListNews(channel, sort string, limit int, date, q, tag string) ([]News, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 20
 	}
@@ -255,7 +273,7 @@ func (s *Store) ListNews(channel, sort string, limit int, date string) ([]News, 
 	}
 
 	ctx := context.Background()
-	cacheKey := fmt.Sprintf("news:list:%s:%s:%d:%s", channel, sort, limit, date)
+	cacheKey := fmt.Sprintf("news:list:%s:%s:%d:%s:%s:%s", channel, sort, limit, date, q, tag)
 
 	// L2: Redis 缓存
 	if s.Redis != nil {
@@ -319,6 +337,14 @@ func (s *Store) ListNews(channel, sort string, limit int, date string) ([]News, 
 			if dateCond {
 				db = db.Where(dateWhere, date, date)
 			}
+			if clause, args := newsSearchClause(q); clause != "" {
+				db = db.Where(clause, args...)
+			}
+			if channel == "producthunt" && tag != "" {
+				if clause, args := newsTagClause(tag); clause != "" {
+					db = db.Where(clause, args...)
+				}
+			}
 			switch sort {
 			case "hot":
 				db = db.Order("hot_score DESC").Order("published_at DESC")
@@ -339,11 +365,22 @@ func (s *Store) ListNews(channel, sort string, limit int, date string) ([]News, 
 
 	// channel == ""：从所有分表合并后排序截断
 	var list []News
-	for _, tbl := range sourceToTable {
+	for src, tbl := range sourceToTable {
+		if tag != "" && src != "producthunt" {
+			continue
+		}
 		var part []News
 		db := s.DB.Table(tbl)
 		if dateCond {
 			db = db.Where(dateWhere, date, date)
+		}
+		if clause, args := newsSearchClause(q); clause != "" {
+			db = db.Where(clause, args...)
+		}
+		if tag != "" && src == "producthunt" {
+			if clause, args := newsTagClause(tag); clause != "" {
+				db = db.Where(clause, args...)
+			}
 		}
 		db.Order("published_at DESC").Limit(limit * 2).Find(&part)
 		list = append(list, part...)
@@ -371,7 +408,7 @@ func (s *Store) ListNews(channel, sort string, limit int, date string) ([]News, 
 
 // ListLatest 兼容旧接口
 func (s *Store) ListLatest(limit int) ([]News, error) {
-	return s.ListNews("", "latest", limit, "")
+	return s.ListNews("", "latest", limit, "", "", "")
 }
 
 // ListPublishedDates 返回有数据的日期列表（倒序）。兼容旧数据：published_date 为空时用 published_at 的日期；结果缓存 5 分钟
