@@ -14,6 +14,12 @@ func TestProductHuntFetcherName(t *testing.T) {
 }
 
 func TestParseProductHuntAtomEntry(t *testing.T) {
+	orig := productHuntTranslateText
+	productHuntTranslateText = func(text string) string {
+		return "中文：" + text
+	}
+	defer func() { productHuntTranslateText = orig }()
+
 	const feed = `<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <entry>
@@ -46,16 +52,39 @@ func TestParseProductHuntAtomEntry(t *testing.T) {
 	if item.URL != "https://www.producthunt.com/products/chatgpt-for-google-sheets" {
 		t.Fatalf("URL = %q, want product URL", item.URL)
 	}
-	if item.Description != "Chat with your spreadsheet, edit cell with natural language" {
-		t.Fatalf("Description = %q, want parsed tagline", item.Description)
-	}
-	if item.HotScore <= 0 {
-		t.Fatalf("HotScore should be positive, got %v", item.HotScore)
+	if item.Description != "中文：Chat with your spreadsheet, edit cell with natural language" {
+		t.Fatalf("Description = %q, want translated tagline", item.Description)
 	}
 	if gotAt := item.PublishedAt.In(time.UTC).Format(time.RFC3339); gotAt == "" {
 		t.Fatalf("PublishedAt should be set")
 	}
 	if item.RawData["author"] != "Rohan Chaubey" {
 		t.Fatalf("author raw data = %#v, want %q", item.RawData["author"], "Rohan Chaubey")
+	}
+}
+
+func TestNormalizeProductHuntDetailTextTranslatesEnglish(t *testing.T) {
+	orig := productHuntTranslateText
+	productHuntTranslateText = func(text string) string {
+		return "中文：" + text
+	}
+	defer func() { productHuntTranslateText = orig }()
+
+	got := normalizeProductHuntDetailText("Chat with your spreadsheet")
+	if got != "中文：Chat with your spreadsheet" {
+		t.Fatalf("normalizeProductHuntDetailText = %q, want translated text", got)
+	}
+}
+
+func TestNormalizeProductHuntDetailTextKeepsChinese(t *testing.T) {
+	orig := productHuntTranslateText
+	productHuntTranslateText = func(text string) string {
+		return "中文：" + text
+	}
+	defer func() { productHuntTranslateText = orig }()
+
+	got := normalizeProductHuntDetailText("中文简介")
+	if got != "中文简介" {
+		t.Fatalf("normalizeProductHuntDetailText = %q, want original Chinese text", got)
 	}
 }

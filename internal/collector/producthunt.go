@@ -25,6 +25,8 @@ var (
 	productHuntIDRe        = regexp.MustCompile(`(?i)post/(\d+)`)
 )
 
+var productHuntTranslateText = TranslateToChinese
+
 type productHuntGraphQLTopicNode struct {
 	Name string `json:"name"`
 	Slug string `json:"slug"`
@@ -249,9 +251,9 @@ func normalizeProductHuntEntry(entry productHuntEntry) (NewsItem, bool) {
 		}
 	}
 
-	tagline := extractProductHuntTagline(entry.Content)
+	tagline := normalizeProductHuntDetailText(extractProductHuntTagline(entry.Content))
 	if tagline == "" {
-		tagline = title
+		tagline = normalizeProductHuntDetailText(title)
 	}
 
 	productID := extractProductHuntID(entry.ID)
@@ -307,9 +309,9 @@ func normalizeProductHuntGraphQLPost(post productHuntGraphQLPost) (NewsItem, boo
 		}
 	}
 
-	tagline := strings.TrimSpace(post.Tagline)
+	tagline := normalizeProductHuntDetailText(strings.TrimSpace(post.Tagline))
 	if tagline == "" {
-		tagline = title
+		tagline = normalizeProductHuntDetailText(title)
 	}
 
 	makerNames := make([]string, 0, len(post.Makers))
@@ -365,6 +367,17 @@ func extractProductHuntTagline(content string) string {
 	}
 
 	return normalizeProductHuntWhitespace(stripProductHuntHTML(content))
+}
+
+func normalizeProductHuntDetailText(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	if isMostlyChinese(text) {
+		return text
+	}
+	return productHuntTranslateText(text)
 }
 
 func stripProductHuntHTML(s string) string {
