@@ -10,7 +10,7 @@
 |------|------|
 | **首页仪表板** | 总览所有频道的热门内容、天气卡片、伊朗战争成本滚动条，一屏掌握全局 |
 | **GitHub Trending** | 抓取 GitHub 每日热门仓库，非中文描述自动翻译为中文 |
-| **Product Hunt** | 独立频道展示 Product Hunt 热门产品，支持关键词搜索与标签筛选；默认使用公开 RSS，配置 `PRODUCTHUNT_API_TOKEN` 后可优先走官方 GraphQL |
+| **Product Hunt** | 独立频道展示 Product Hunt 热门产品，支持关键词搜索与标签筛选；默认展示东八区前一天的数据，且使用公开 RSS，配置 `PRODUCTHUNT_API_TOKEN` 后可优先走官方 GraphQL |
 | **百度热搜** | 实时获取百度热搜榜单 |
 | **Hacker News** | 抓取 Hacker News 热门文章，标题自动翻译为中文 |
 | **金融行情** | 黄金价格走势（元/克）；A 股三大指数（上证、深证、创业板）置顶；自选股通过环境变量 `ASHARE_STOCK_CODES` 配置 |
@@ -220,7 +220,7 @@ make frontend-build # 仅前端构建
 
 - GitHub Trending 页面结构可能变化，解析逻辑属于"尽力而为"的实现
 - 非中文内容（GitHub 描述、Hacker News 标题、伊朗战争时间线）自动翻译为中文，优先 Google 翻译，失败时回退 MyMemory
-- Product Hunt 默认走公开 RSS feed；如果配置了 `PRODUCTHUNT_API_TOKEN`，会优先使用官方 GraphQL 拉取热门产品和 topics
+- Product Hunt 默认展示东八区前一天数据，并走公开 RSS feed；如果配置了 `PRODUCTHUNT_API_TOKEN`，会优先使用官方 GraphQL 拉取热门产品和 topics
 - 天气数据来源于 QWeather 和风天气，需申请免费开发者 Key 并配置 `QWEATHER_API_KEY` 与 `QWEATHER_API_HOST`
 - 伊朗战争成本抓取依赖 Chromium，Docker 镜像已内置；本地开发需系统安装 Chrome 或 Chromium
 - X 热搜因外部数据源不稳定暂未接入，采集器代码保留在 `internal/collector/x_trends.go`

@@ -28,6 +28,15 @@ function todayEast8(): string {
   });
 }
 
+/** 东八区相对今天偏移后的日期，offsetDays 可为负数（如 -1 表示昨天） */
+function dateEast8Offset(offsetDays: number): string {
+  const now = new Date();
+  now.setDate(now.getDate() + offsetDays);
+  return now.toLocaleDateString("sv-SE", {
+    timeZone: "Asia/Shanghai"
+  });
+}
+
 function getInitialSearchState(defaultDate: string) {
   if (typeof window === "undefined") {
     return { channel: "", date: defaultDate };
@@ -58,6 +67,7 @@ function truncateText(text: string | undefined, limit: number): string {
 
 export const App: React.FC = () => {
   const today = useMemo(() => todayEast8(), []);
+  const yesterday = useMemo(() => dateEast8Offset(-1), []);
   const initialSearch = useMemo(() => getInitialSearchState(today), [today]);
   const [channel, setChannel] = useState<string>(initialSearch.channel);
   const [date, setDate] = useState<string>(initialSearch.date);
@@ -101,7 +111,10 @@ export const App: React.FC = () => {
               channel: ch.code,
               sort: "hot",
               limit: ch.code === "gold" ? 500 : HOME_PREVIEW_COUNT * 2,
-              date: date || undefined
+              date:
+                ch.code === "producthunt" && date === today
+                  ? yesterday
+                  : date || undefined
             })
           )
         );
@@ -113,7 +126,7 @@ export const App: React.FC = () => {
           channel,
           sort: "hot",
           limit: isGold ? 500 : 30,
-          date: date || undefined,
+          date: isProductHunt && date === today ? yesterday : date || undefined,
           q: isProductHunt ? query || undefined : undefined,
           tag: isProductHunt ? tag || undefined : undefined
         });
@@ -134,17 +147,17 @@ export const App: React.FC = () => {
   useEffect(() => {
     fetchNewsDates({ channel: channel || undefined, limit: 31 })
       .then((list) => {
-        const today = todayEast8();
+        const fallbackDate = channel === "producthunt" ? yesterday : todayEast8();
         if (list.length === 0) {
-          setDates([today]);
+          setDates([fallbackDate]);
         } else {
-          setDates(list.includes(today) ? list : [today, ...list]);
+          setDates(list.includes(fallbackDate) ? list : [fallbackDate, ...list]);
         }
       })
       .catch(() => {
-        setDates([todayEast8()]);
+        setDates([channel === "producthunt" ? yesterday : todayEast8()]);
       });
-  }, [channel]);
+  }, [channel, yesterday]);
 
   const channelGroups = useMemo(() => {
     if (!isHome) return [];
